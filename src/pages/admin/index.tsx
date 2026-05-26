@@ -20,15 +20,7 @@ import {
   setAppointmentNotes,
   setAppointmentStatus,
 } from '@/services/appointmentService';
-import {
-  createPaymentFromAppointment,
-  endOfDayMs,
-  fetchPaymentsRangeAggregate,
-  fetchPaymentsRangeAll,
-  fetchPaymentsRangePage,
-  startOfDayMs,
-  subscribePaymentsRange,
-} from '@/services/financeService';
+import { endOfDayMs, fetchPaymentsRangeAll, fetchPaymentsRangeAggregate, fetchPaymentsRangePage, startOfDayMs, subscribePaymentsRange } from '@/services/financeService';
 import { createNotification } from '@/services/notificationService';
 import { updateAppSettings } from '@/services/settingsService';
 import { uploadImageFromPath } from '@/services/uploadService';
@@ -507,13 +499,11 @@ function AdminPage() {
     if (!appointmentSelected || !currentUser) return;
     const amountCents = Math.max(0, Number(paymentAmount) || 0) * 100;
     await runSafe(async () => {
-      await createPaymentFromAppointment({
+      await setAppointmentStatus(appointmentSelected.id, 'concluido', {
+        actor: currentUser,
         appointment: appointmentSelected,
-        amountCents,
-        method: paymentMethod,
-        adminUser: currentUser,
+        payment: { amountCents, method: paymentMethod },
       });
-      await setAppointmentStatus(appointmentSelected.id, 'concluido');
       await createNotification({
         target: 'cliente',
         targetUserId: appointmentSelected.userId,
@@ -538,7 +528,7 @@ function AdminPage() {
         summary: `Pagamento registrado: ${appointmentSelected.userName}`,
         meta: { amountCents, method: paymentMethod },
       });
-      Taro.showToast({ title: 'Pagamento registrado', icon: 'success' });
+      Taro.showToast({ title: 'Finalizado', icon: 'success' });
       setPaymentOpen(false);
       setAppointmentModalOpen(false);
     });

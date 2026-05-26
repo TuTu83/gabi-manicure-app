@@ -19,7 +19,7 @@ import type { UserProfile } from '@/types/user';
 
 type Unsubscribe = () => void;
 
-const defaultAdminEmails = ['admin@gabimanicure.com'];
+const defaultAdminEmails = ['suporte.gabimanicure@gmail.com'];
 const localUsersKey = 'gm.users';
 
 export async function getAdminEmails(): Promise<string[]> {

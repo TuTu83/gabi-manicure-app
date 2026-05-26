@@ -21,6 +21,7 @@ function RegisterPage() {
 
   const [fullName, setFullName] = useState('');
   const [socialName, setSocialName] = useState('');
+  const [email, setEmail] = useState('');
   const [phone, setPhone] = useState('');
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
@@ -28,6 +29,14 @@ function RegisterPage() {
   const [showConfirm, setShowConfirm] = useState(false);
   const [errorText, setErrorText] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+
+  const validateEmailOptional = (value: string): string | null => {
+    const trimmed = (value || '').trim().toLowerCase();
+    if (!trimmed) return null;
+    const ok = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(trimmed);
+    if (!ok) return 'E-mail inválido';
+    return null;
+  };
 
   const passwordHint = useMemo(() => {
     const err = validatePasswordSecurity(password);
@@ -38,6 +47,8 @@ function RegisterPage() {
     setErrorText(null);
     const fullNameErr = validateFullName(fullName);
     if (fullNameErr) return setErrorText(fullNameErr);
+    const emailErr = validateEmailOptional(email);
+    if (emailErr) return setErrorText(emailErr);
     const phoneErr = validatePhoneBR(phone);
     if (phoneErr) return setErrorText(phoneErr);
     const passErr = validatePasswordSecurity(password);
@@ -53,6 +64,7 @@ function RegisterPage() {
       setRegisterDraft({
         fullName: fullName.trim(),
         socialName: socialName.trim() || undefined,
+        email: email.trim().toLowerCase() || undefined,
         phoneRaw: phone,
         phoneE164,
         password,
@@ -83,6 +95,11 @@ function RegisterPage() {
         <Text className={styles.fieldLabel}>Nome social (opcional)</Text>
         <View className={styles.inputRow}>
           <Input className={styles.input} value={socialName} onInput={(e) => setSocialName(e.detail.value)} placeholder="Como prefere ser chamada" />
+        </View>
+
+        <Text className={styles.fieldLabel}>E-mail (opcional)</Text>
+        <View className={styles.inputRow}>
+          <Input className={styles.input} value={email} onInput={(e) => setEmail(e.detail.value)} placeholder="Ex.: nome@gmail.com" />
         </View>
 
         <Text className={styles.fieldLabel}>Telefone com DDD</Text>

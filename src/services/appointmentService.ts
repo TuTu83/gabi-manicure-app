@@ -16,7 +16,10 @@ import {
 import { getFirebaseDb, isFirebaseConfigured } from '@/services/firebase';
 import { getLocalSettings } from '@/services/settingsService';
 import { consumeRateLimit } from '@/services/storage';
+import { ensurePaymentForFinalizedAppointment } from '@/services/financeService';
 import type { Appointment, AppointmentReview, AppointmentStatus, LoyaltySummary, WaitlistEntry } from '@/types/booking';
+import type { PaymentMethod } from '@/types/finance';
+import type { UserProfile } from '@/types/user';
 
 const appointmentsKey = 'gm.appointments';
 const reviewsKey = 'gm.reviews';
@@ -296,9 +299,18 @@ export async function cancelAppointment(appointmentId: string): Promise<void> {
   });
 }
 
-export async function setAppointmentStatus(appointmentId: string, status: AppointmentStatus): Promise<void> {
+export async function setAppointmentStatus(
+  appointmentId: string,
+  status: AppointmentStatus,
+  options?: {
+    actor?: UserProfile;
+    appointment?: Appointment;
+    payment?: { method?: PaymentMethod; amountCents?: number };
+  },
+): Promise<void> {
   if (!appointmentId) return;
   const now = Date.now();
+  const shouldEnsurePayment = status === 'concluido';
 
   if (!isFirebaseConfigured()) {
     const all = safeGetArray<Appointment>(appointmentsKey);
@@ -308,6 +320,15 @@ export async function setAppointmentStatus(appointmentId: string, status: Appoin
     if (status === 'concluido') next.completedAt = now;
     all[idx] = next;
     safeSetArray(appointmentsKey, all);
+
+    if (shouldEnsurePayment && options?.actor) {
+      await ensurePaymentForFinalizedAppointment({
+        appointment: next,
+        adminUser: options.actor,
+        amountCents: options.payment?.amountCents,
+        method: options.payment?.method,
+      });
+    }
     return;
   }
 
@@ -316,6 +337,22 @@ export async function setAppointmentStatus(appointmentId: string, status: Appoin
   const patch: any = { status, updatedAt: now };
   if (status === 'concluido') patch.completedAt = now;
   await updateDoc(doc(db, 'appointments', appointmentId), patch);
+
+  if (shouldEnsurePayment) {
+    const actor = options?.actor;
+    if (!actor) return;
+
+    const base = options?.appointment;
+    if (!base) return;
+
+    const normalized: Appointment = { ...base, status, updatedAt: now, completedAt: now };
+    await ensurePaymentForFinalizedAppointment({
+      appointment: normalized,
+      adminUser: actor,
+      amountCents: options.payment?.amountCents,
+      method: options.payment?.method,
+    });
+  }
 }
 
 export async function setAppointmentNotes(appointmentId: string, notes: string): Promise<void> {

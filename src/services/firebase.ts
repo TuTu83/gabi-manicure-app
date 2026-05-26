@@ -13,9 +13,13 @@ export interface FirebaseClientConfig {
 
 function readEnvValue(key: string): string {
   try {
-    const env = process?.env as any;
-    const raw = env ? env[key] : '';
-    return String(raw || '').trim();
+    if (typeof process === 'undefined') return '';
+    if (key === 'TARO_APP_FIREBASE_API_KEY') return (process.env.TARO_APP_FIREBASE_API_KEY || '').trim();
+    if (key === 'TARO_APP_FIREBASE_AUTH_DOMAIN') return (process.env.TARO_APP_FIREBASE_AUTH_DOMAIN || '').trim();
+    if (key === 'TARO_APP_FIREBASE_PROJECT_ID') return (process.env.TARO_APP_FIREBASE_PROJECT_ID || '').trim();
+    if (key === 'TARO_APP_FIREBASE_APP_ID') return (process.env.TARO_APP_FIREBASE_APP_ID || '').trim();
+    if (key === 'TARO_APP_FIREBASE_STORAGE_BUCKET') return (process.env.TARO_APP_FIREBASE_STORAGE_BUCKET || '').trim();
+    return '';
   } catch {
     return '';
   }

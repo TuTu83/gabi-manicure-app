@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { Button, Image, Text, View } from '@tarojs/components';
 import Taro from '@tarojs/taro';
 import classnames from 'classnames';
-import { signOut as signOutService } from '@/services/authService';
+import { deleteMyAccount, signOut as signOutService } from '@/services/authService';
 import { computeLoyalty, formatDateLabel, formatTime, subscribeUserAppointments } from '@/services/appointmentService';
 import { markNotificationRead, subscribeNotificationsForUser } from '@/services/notificationService';
 import { openAdminWhatsApp } from '@/services/whatsappService';
@@ -24,6 +24,7 @@ function ProfilePage() {
   const [notifications, setNotifications] = useState<InAppNotification[]>([]);
   const [notificationsOpen, setNotificationsOpen] = useState(false);
   const [isAdmin, setIsAdmin] = useState(false);
+  const [isDeleting, setIsDeleting] = useState(false);
 
   useEffect(() => {
     if (!currentUser) {
@@ -62,6 +63,28 @@ function ProfilePage() {
     } finally {
       signOut();
       Taro.redirectTo({ url: '/pages/auth/login/index' });
+    }
+  };
+
+  const handleDeleteAccount = async () => {
+    if (!currentUser || isDeleting) return;
+    const { confirm } = await Taro.showModal({
+      title: 'Excluir conta',
+      content: 'Essa ação é permanente e remove seu acesso ao app. Tem certeza que deseja excluir sua conta?',
+      confirmText: 'Excluir',
+      cancelText: 'Cancelar',
+      confirmColor: '#d32f2f',
+    });
+    if (!confirm) return;
+
+    setIsDeleting(true);
+    try {
+      await deleteMyAccount(currentUser);
+      signOut();
+      Taro.redirectTo({ url: '/pages/auth/login/index' });
+    } catch (error: any) {
+      Taro.showToast({ title: String(error?.message || 'Não foi possível excluir a conta'), icon: 'none' });
+      setIsDeleting(false);
     }
   };
 
@@ -136,6 +159,14 @@ function ProfilePage() {
 
         <Button className={classnames(styles.btn, styles.btnPrimary)} onClick={handleLogout}>
           <Text className={styles.btnTextWhite}>Sair</Text>
+        </Button>
+
+        <Button
+          className={classnames(styles.btn, styles.btnDanger)}
+          disabled={!currentUser || isDeleting}
+          onClick={handleDeleteAccount}
+        >
+          <Text className={styles.btnTextDanger}>{isDeleting ? 'Excluindo...' : 'Excluir conta'}</Text>
         </Button>
       </View>
 

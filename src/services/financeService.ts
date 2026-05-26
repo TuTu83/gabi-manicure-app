@@ -55,6 +55,7 @@ export async function createPaymentFromAppointment(params: {
   const payload: Omit<PaymentRecord, 'id'> = {
     appointmentId: appointment.id,
     appointmentStatus: appointment.status,
+    status: 'paid',
     userId: appointment.userId,
     userName: appointment.userName,
     phoneE164: appointment.phoneE164,
@@ -85,6 +86,52 @@ export async function createPaymentFromAppointment(params: {
   if (!dup.empty) throw new Error('Este pagamento já foi registrado.');
   const ref = await addDoc(collection(db, 'payments'), payload);
   return { id: ref.id, ...payload };
+}
+
+export async function fetchPaymentByAppointmentId(appointmentId: string): Promise<PaymentRecord | null> {
+  if (!appointmentId) return null;
+
+  if (!isFirebaseConfigured()) {
+    const all = safeGetLocal();
+    return all.find((p) => p.appointmentId === appointmentId) || null;
+  }
+
+  const db = getFirebaseDb();
+  if (!db) return null;
+  const q = query(collection(db, 'payments'), where('appointmentId', '==', appointmentId), limit(1));
+  const snap = await getDocs(q);
+  if (snap.empty) return null;
+  const docSnap = snap.docs[0];
+  return { id: docSnap.id, ...(docSnap.data() as Omit<PaymentRecord, 'id'>) };
+}
+
+export async function ensurePaymentForFinalizedAppointment(params: {
+  appointment: Appointment;
+  adminUser: UserProfile;
+  amountCents?: number;
+  method?: PaymentMethod;
+}): Promise<PaymentRecord | null> {
+  const amountCents = Number(params.amountCents ?? params.appointment.priceCents ?? 0);
+  if (amountCents <= 0) return null;
+  const method: PaymentMethod = (params.method || 'pix') as PaymentMethod;
+
+  const existing = await fetchPaymentByAppointmentId(params.appointment.id);
+  if (existing) return existing;
+
+  try {
+    return await createPaymentFromAppointment({
+      appointment: params.appointment,
+      amountCents,
+      method,
+      adminUser: params.adminUser,
+    });
+  } catch (error: any) {
+    const msg = String(error?.message || '');
+    if (msg.includes('já foi registrado')) {
+      return await fetchPaymentByAppointmentId(params.appointment.id);
+    }
+    throw error;
+  }
 }
 
 export function subscribePaymentsRange(params: {

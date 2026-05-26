@@ -2,8 +2,16 @@ import Taro from '@tarojs/taro';
 import type { UserProfile } from '@/types/user';
 import { normalizePhoneBRToE164 } from '@/utils/validators';
 import { getFirebaseAuth, getFirebaseDb, isFirebaseConfigured } from '@/services/firebase';
-import { doc, getDoc, setDoc } from 'firebase/firestore';
-import { GoogleAuthProvider, signInWithPopup, signInWithEmailAndPassword, createUserWithEmailAndPassword, signOut as firebaseSignOut, updatePassword } from 'firebase/auth';
+import { collection, doc, getDoc, getDocs, limit, query, setDoc, where } from 'firebase/firestore';
+import {
+  GoogleAuthProvider,
+  createUserWithEmailAndPassword,
+  deleteUser,
+  signInWithEmailAndPassword,
+  signInWithPopup,
+  signOut as firebaseSignOut,
+  updatePassword,
+} from 'firebase/auth';
 
 const usersKey = 'gm.users';
 const attemptsKey = 'gm.loginAttempts';
@@ -152,29 +160,42 @@ function writeLocalUsers(users: LocalUserRecord[]): void {
   }
 }
 
+function deleteLocalUserById(userId: string): void {
+  if (!userId) return;
+  const users = readLocalUsers();
+  const next = users.filter((u) => u.profile.id !== userId);
+  writeLocalUsers(next);
+}
+
 export async function registerWithPhonePassword(input: {
   fullName: string;
   socialName?: string;
+  email?: string;
   phoneRaw: string;
   password: string;
 }): Promise<UserProfile> {
   const phoneE164 = normalizePhoneBRToE164(input.phoneRaw);
   if (!phoneE164) throw new Error('Telefone inválido');
+  const emailProvided = (input.email || '').trim().toLowerCase();
 
   if (isFirebaseConfigured()) {
     const auth = getFirebaseAuth();
     const db = getFirebaseDb();
     if (!auth || !db) throw new Error('Firebase indisponível');
 
-    const aliasEmail = phoneToAliasEmail(phoneE164);
-    const result = await createUserWithEmailAndPassword(auth, aliasEmail, input.password);
+    const qPhone = query(collection(db, 'users'), where('phoneE164', '==', phoneE164), limit(1));
+    const phoneSnap = await getDocs(qPhone);
+    if (!phoneSnap.empty) throw new Error('Este telefone já possui cadastro');
+
+    const accountEmail = emailProvided || phoneToAliasEmail(phoneE164);
+    const result = await createUserWithEmailAndPassword(auth, accountEmail, input.password);
 
     const profile: UserProfile = {
       id: result.user.uid,
       fullName: input.fullName.trim(),
       socialName: input.socialName?.trim() || undefined,
       phoneE164,
-      email: aliasEmail,
+      email: emailProvided || accountEmail,
       provider: 'password',
       createdAt: Date.now(),
     };
@@ -186,12 +207,17 @@ export async function registerWithPhonePassword(input: {
   const users = readLocalUsers();
   const existing = users.find((u) => u.profile.phoneE164 === phoneE164);
   if (existing) throw new Error('Este telefone já possui cadastro');
+  if (emailProvided) {
+    const emailExists = users.some((u) => (u.profile.email || '').toLowerCase() === emailProvided);
+    if (emailExists) throw new Error('Este e-mail já está em uso');
+  }
 
   const profile: UserProfile = {
     id: `local_${Date.now()}`,
     fullName: input.fullName.trim(),
     socialName: input.socialName?.trim() || undefined,
     phoneE164,
+    email: emailProvided || undefined,
     provider: 'password',
     createdAt: Date.now(),
   };
@@ -346,4 +372,44 @@ export async function signOut(): Promise<void> {
       }
     }
   }
+}
+
+export async function deleteMyAccount(profile: UserProfile): Promise<void> {
+  if (!profile?.id) throw new Error('Sessão expirada');
+
+  if (isFirebaseConfigured()) {
+    const auth = getFirebaseAuth();
+    const db = getFirebaseDb();
+    if (!auth || !db) throw new Error('Firebase indisponível');
+    if (!auth.currentUser) throw new Error('Sessão expirada');
+    if (auth.currentUser.uid !== profile.id) throw new Error('Sessão inválida');
+
+    const now = Date.now();
+    await setDoc(
+      doc(db, 'users', profile.id),
+      {
+        deletedAt: now,
+        deletedByUser: true,
+        updatedAt: now,
+      } as any,
+      { merge: true },
+    );
+
+    try {
+      await deleteUser(auth.currentUser);
+    } catch (error: any) {
+      const code = String(error?.code || '');
+      if (code === 'auth/requires-recent-login') {
+        throw new Error('Por segurança, faça login novamente para excluir sua conta.');
+      }
+      throw error;
+    }
+
+    try {
+      await firebaseSignOut(auth);
+    } catch {}
+    return;
+  }
+
+  deleteLocalUserById(profile.id);
 }

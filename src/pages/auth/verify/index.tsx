@@ -85,6 +85,7 @@ function VerifyCodePage() {
       await registerWithPhonePassword({
         fullName: registerDraft.fullName,
         socialName: registerDraft.socialName,
+        email: registerDraft.email,
         phoneRaw: registerDraft.phoneRaw,
         password: registerDraft.password,
       });

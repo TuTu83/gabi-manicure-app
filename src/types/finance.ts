@@ -4,6 +4,7 @@ export interface PaymentRecord {
   id: string;
   appointmentId: string;
   appointmentStatus: string;
+  status?: 'paid' | 'void';
 
   userId: string;
   userName: string;
@@ -22,4 +23,3 @@ export interface PaymentRecord {
   createdByUserId: string;
   createdByEmail?: string;
 }
-

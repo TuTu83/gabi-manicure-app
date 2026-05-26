@@ -16,6 +16,7 @@ export interface UserProfile {
 export interface RegisterDraft {
   fullName: string;
   socialName?: string;
+  email?: string;
   phoneRaw: string;
   phoneE164: string;
   password: string;
