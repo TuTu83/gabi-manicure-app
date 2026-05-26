@@ -1,0 +1,35 @@
+// ============================================
+// Estilos de compatibilidade entre plataformas
+// ============================================
+
+// 1. Box model global: padroniza em border-box para evitar diferenças no cálculo de padding
+page,
+view,
+scroll-view,
+swiper,
+swiper-item,
+text,
+image,
+button,
+input,
+textarea,
+form,
+label,
+navigator {
+  box-sizing: border-box;
+}
+
+// 2. Ajuste do TabBar no H5: evita label desalinhada quando não há ícone (o TabBar nativo do mini app não é afetado)
+.weui-tabbar__icon:empty,
+.weui-tabbar__icon:not(:has(img)) {
+  display: none !important;
+  width: 0 !important;
+  height: 0 !important;
+}
+
+.weui-tabbar__label,
+[class*='tabbar'] [class*='label'],
+[class*='tabbar'] [class*='text'] {
+  font-size: 30px !important;
+  line-height: 1.4 !important;
+}

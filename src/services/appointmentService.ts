@@ -1,0 +1,486 @@
+import Taro from '@tarojs/taro';
+import dayjs from 'dayjs';
+import {
+  addDoc,
+  collection,
+  doc,
+  getDocs,
+  onSnapshot,
+  orderBy,
+  query,
+  runTransaction,
+  setDoc,
+  updateDoc,
+  where,
+} from 'firebase/firestore';
+import { getFirebaseDb, isFirebaseConfigured } from '@/services/firebase';
+import { getLocalSettings } from '@/services/settingsService';
+import { consumeRateLimit } from '@/services/storage';
+import type { Appointment, AppointmentReview, AppointmentStatus, LoyaltySummary, WaitlistEntry } from '@/types/booking';
+
+const appointmentsKey = 'gm.appointments';
+const reviewsKey = 'gm.reviews';
+const waitlistKey = 'gm.waitlist';
+
+type Unsubscribe = () => void;
+
+function safeGetArray<T>(key: string): T[] {
+  try {
+    const value = Taro.getStorageSync(key);
+    return (value as T[]) || [];
+  } catch (error) {
+    console.error('[Agendamento] falha ao ler armazenamento local', error);
+    return [];
+  }
+}
+
+function safeSetArray<T>(key: string, value: T[]): void {
+  try {
+    Taro.setStorageSync(key, value);
+  } catch (error) {
+    console.error('[Agendamento] falha ao salvar armazenamento local', error);
+  }
+}
+
+function overlaps(aStart: number, aEnd: number, bStart: number, bEnd: number): boolean {
+  return aStart < bEnd && aEnd > bStart;
+}
+
+export function dateKeyFromMs(ms: number): string {
+  return dayjs(ms).format('YYYY-MM-DD');
+}
+
+export function formatTime(ms: number): string {
+  return dayjs(ms).format('HH:mm');
+}
+
+export function formatDateLabel(ms: number): string {
+  return dayjs(ms).format('DD/MM/YYYY');
+}
+
+export function priceFromCents(cents: number): string {
+  const value = (cents || 0) / 100;
+  return value.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
+}
+
+export function buildSlotsForDay(params: {
+  dateMs: number;
+  durationMinutes: number;
+  busy: Array<{ startAt: number; endAt: number; status: AppointmentStatus }>;
+}): Array<{ startAt: number; endAt: number; disabled: boolean; reason?: string }> {
+  const { dateMs, durationMinutes, busy } = params;
+  const dayStart = dayjs(dateMs).startOf('day');
+  const now = Date.now();
+  const hours = getLocalSettings().businessHours;
+  const workingDays = getLocalSettings().workingDays || [1, 2, 3, 4, 5, 6];
+  const weekday = dayStart.day();
+  if (!workingDays.includes(weekday)) return [];
+
+  const openAt = dayStart.hour(hours.openHour).minute(0).second(0).millisecond(0);
+  const closeAt = dayStart.hour(hours.closeHour).minute(0).second(0).millisecond(0);
+
+  const stepMinutes = 15;
+  const slots: Array<{ startAt: number; endAt: number; disabled: boolean; reason?: string }> = [];
+
+  for (
+    let cursor = openAt.valueOf();
+    cursor + durationMinutes * 60 * 1000 <= closeAt.valueOf();
+    cursor += stepMinutes * 60 * 1000
+  ) {
+    const startAt = cursor;
+    const endAt = cursor + durationMinutes * 60 * 1000;
+
+    const isPast = endAt <= now;
+    const hasConflict = busy.some((b) => b.status !== 'cancelado' && overlaps(startAt, endAt, b.startAt, b.endAt));
+
+    if (isPast) {
+      slots.push({ startAt, endAt, disabled: true, reason: 'Horário passado' });
+      continue;
+    }
+    if (hasConflict) {
+      slots.push({ startAt, endAt, disabled: true, reason: 'Ocupado' });
+      continue;
+    }
+    slots.push({ startAt, endAt, disabled: false });
+  }
+
+  return slots;
+}
+
+export function subscribeUserAppointments(userId: string, onChange: (items: Appointment[]) => void): Unsubscribe {
+  if (!userId) {
+    onChange([]);
+    return () => {};
+  }
+
+  if (!isFirebaseConfigured()) {
+    const items = safeGetArray<Appointment>(appointmentsKey).filter((a) => a.userId === userId);
+    onChange(items.sort((a, b) => b.startAt - a.startAt));
+    return () => {};
+  }
+
+  const db = getFirebaseDb();
+  if (!db) {
+    onChange([]);
+    return () => {};
+  }
+
+  const q = query(collection(db, 'appointments'), where('userId', '==', userId), orderBy('startAt', 'desc'));
+  const unsub = onSnapshot(
+    q,
+    (snap) => {
+      const items = snap.docs.map((d) => ({ id: d.id, ...(d.data() as Omit<Appointment, 'id'>) }));
+      onChange(items);
+    },
+    (error) => {
+      console.error('[Agendamento] falha ao escutar agendamentos', error);
+      onChange([]);
+    },
+  );
+  return unsub;
+}
+
+export function subscribeBusyForProfessionalDay(params: {
+  professionalId: string;
+  dateMs: number;
+  onChange: (items: Array<{ startAt: number; endAt: number; status: AppointmentStatus }>) => void;
+}): Unsubscribe {
+  const { professionalId, dateMs, onChange } = params;
+
+  const start = dayjs(dateMs).startOf('day').valueOf();
+  const end = dayjs(dateMs).endOf('day').valueOf();
+
+  if (!professionalId) {
+    onChange([]);
+    return () => {};
+  }
+
+  if (!isFirebaseConfigured()) {
+    const items = safeGetArray<Appointment>(appointmentsKey)
+      .filter((a) => a.professionalId === professionalId && overlaps(a.startAt, a.endAt, start, end))
+      .map((a) => ({ startAt: a.startAt, endAt: a.endAt, status: a.status }));
+    onChange(items);
+    return () => {};
+  }
+
+  const db = getFirebaseDb();
+  if (!db) {
+    onChange([]);
+    return () => {};
+  }
+
+  const q = query(
+    collection(db, 'appointments'),
+    where('professionalId', '==', professionalId),
+    where('startAt', '>=', start),
+    where('startAt', '<=', end),
+  );
+
+  const unsub = onSnapshot(
+    q,
+    (snap) => {
+      const items = snap.docs.map((d) => {
+        const data = d.data() as Appointment;
+        return { startAt: data.startAt, endAt: data.endAt, status: data.status };
+      });
+      onChange(items);
+    },
+    (error) => {
+      console.error('[Agendamento] falha ao escutar agenda do dia', error);
+      onChange([]);
+    },
+  );
+
+  return unsub;
+}
+
+export async function createAppointment(input: Omit<Appointment, 'id' | 'createdAt' | 'updatedAt' | 'status'>): Promise<Appointment> {
+  const startAt = input.startAt;
+  const endAt = input.endAt;
+  if (endAt <= Date.now()) throw new Error('Não é possível agendar em horário passado');
+  if (!input.userId) throw new Error('Sessão expirada');
+
+  const rl = consumeRateLimit({ key: `createAppointment:${input.userId}`, max: 2, windowMs: 15000 });
+  if (!rl.allowed) throw new Error('Muitas tentativas seguidas. Aguarde alguns segundos e tente novamente.');
+
+  if (!isFirebaseConfigured()) {
+    const all = safeGetArray<Appointment>(appointmentsKey);
+    const hasConflict = all.some(
+      (a) =>
+        a.professionalId === input.professionalId &&
+        a.status !== 'cancelado' &&
+        overlaps(startAt, endAt, a.startAt, a.endAt),
+    );
+    if (hasConflict) throw new Error('Este horário acabou de ser ocupado. Escolha outro horário.');
+
+    const appointment: Appointment = {
+      ...input,
+      id: `local_${Date.now()}`,
+      status: 'pendente',
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+    };
+    safeSetArray(appointmentsKey, [appointment, ...all]);
+    return appointment;
+  }
+
+  const db = getFirebaseDb();
+  if (!db) throw new Error('Firebase indisponível');
+
+  try {
+    const threshold = Date.now() - 15_000;
+    const qUser = query(collection(db, 'appointments'), where('userId', '==', input.userId), where('createdAt', '>=', threshold));
+    const snapUser = await getDocs(qUser);
+    const tooSoon = snapUser.docs.some((d) => {
+      const a = d.data() as Appointment;
+      return (a.createdAt || 0) >= threshold && a.status !== 'cancelado';
+    });
+    if (tooSoon) throw new Error('Você acabou de solicitar um agendamento. Aguarde alguns segundos e tente novamente.');
+  } catch (error: any) {
+    if (String(error?.message || '').includes('Aguarde alguns segundos')) throw error;
+  }
+
+  const appointment = await runTransaction(db, async (tx) => {
+    const start = dayjs(startAt).startOf('day').valueOf();
+    const end = dayjs(startAt).endOf('day').valueOf();
+    const q = query(
+      collection(db, 'appointments'),
+      where('professionalId', '==', input.professionalId),
+      where('startAt', '>=', start),
+      where('startAt', '<=', end),
+    );
+    const snap = await getDocs(q);
+
+    const conflicts = snap.docs.some((d) => {
+      const data = d.data() as Appointment;
+      if (data.status === 'cancelado') return false;
+      return overlaps(startAt, endAt, data.startAt, data.endAt);
+    });
+    if (conflicts) throw new Error('Este horário acabou de ser ocupado. Escolha outro horário.');
+
+    const ref = doc(collection(db, 'appointments'));
+    const payload: Omit<Appointment, 'id'> = {
+      ...input,
+      status: 'pendente',
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+    };
+    tx.set(ref, payload);
+    return { id: ref.id, ...payload };
+  });
+
+  return appointment;
+}
+
+export async function cancelAppointment(appointmentId: string): Promise<void> {
+  if (!appointmentId) return;
+  const rl = consumeRateLimit({ key: `cancelAppointment:${appointmentId}`, max: 2, windowMs: 8000 });
+  if (!rl.allowed) throw new Error('Muitas ações seguidas. Aguarde alguns segundos e tente novamente.');
+
+  if (!isFirebaseConfigured()) {
+    const all = safeGetArray<Appointment>(appointmentsKey);
+    const idx = all.findIndex((a) => a.id === appointmentId);
+    if (idx < 0) return;
+    const next = { ...all[idx], status: 'cancelado' as const, canceledAt: Date.now(), updatedAt: Date.now() };
+    all[idx] = next;
+    safeSetArray(appointmentsKey, all);
+    return;
+  }
+
+  const db = getFirebaseDb();
+  if (!db) throw new Error('Firebase indisponível');
+  await updateDoc(doc(db, 'appointments', appointmentId), {
+    status: 'cancelado',
+    canceledAt: Date.now(),
+    updatedAt: Date.now(),
+  });
+}
+
+export async function setAppointmentStatus(appointmentId: string, status: AppointmentStatus): Promise<void> {
+  if (!appointmentId) return;
+  const now = Date.now();
+
+  if (!isFirebaseConfigured()) {
+    const all = safeGetArray<Appointment>(appointmentsKey);
+    const idx = all.findIndex((a) => a.id === appointmentId);
+    if (idx < 0) return;
+    const next: Appointment = { ...all[idx], status, updatedAt: now };
+    if (status === 'concluido') next.completedAt = now;
+    all[idx] = next;
+    safeSetArray(appointmentsKey, all);
+    return;
+  }
+
+  const db = getFirebaseDb();
+  if (!db) throw new Error('Firebase indisponível');
+  const patch: any = { status, updatedAt: now };
+  if (status === 'concluido') patch.completedAt = now;
+  await updateDoc(doc(db, 'appointments', appointmentId), patch);
+}
+
+export async function setAppointmentNotes(appointmentId: string, notes: string): Promise<void> {
+  if (!appointmentId) return;
+  const value = (notes || '').trim();
+  const now = Date.now();
+
+  if (!isFirebaseConfigured()) {
+    const all = safeGetArray<Appointment>(appointmentsKey);
+    const idx = all.findIndex((a) => a.id === appointmentId);
+    if (idx < 0) return;
+    all[idx] = { ...all[idx], notes: value || undefined, updatedAt: now };
+    safeSetArray(appointmentsKey, all);
+    return;
+  }
+
+  const db = getFirebaseDb();
+  if (!db) throw new Error('Firebase indisponível');
+  await updateDoc(doc(db, 'appointments', appointmentId), { notes: value || null, updatedAt: now });
+}
+
+export async function markOnMyWay(appointmentId: string): Promise<void> {
+  if (!appointmentId) return;
+  const now = Date.now();
+  const rl = consumeRateLimit({ key: `onMyWay:${appointmentId}`, max: 1, windowMs: 10000 });
+  if (!rl.allowed) throw new Error('Aguarde alguns segundos para enviar novamente.');
+
+  if (!isFirebaseConfigured()) {
+    const all = safeGetArray<Appointment>(appointmentsKey);
+    const idx = all.findIndex((a) => a.id === appointmentId);
+    if (idx < 0) return;
+    all[idx] = { ...all[idx], onMyWayAt: now, updatedAt: now };
+    safeSetArray(appointmentsKey, all);
+    return;
+  }
+
+  const db = getFirebaseDb();
+  if (!db) throw new Error('Firebase indisponível');
+  await updateDoc(doc(db, 'appointments', appointmentId), { onMyWayAt: now, updatedAt: now });
+}
+
+export async function rescheduleAppointment(params: {
+  appointmentId: string;
+  professionalId: string;
+  startAt: number;
+  endAt: number;
+  professionalName: string;
+}): Promise<void> {
+  const { appointmentId, professionalId, startAt, endAt, professionalName } = params;
+  if (!appointmentId) return;
+  if (endAt <= Date.now()) throw new Error('Não é possível reagendar para horário passado');
+  const rl = consumeRateLimit({ key: `reschedule:${appointmentId}`, max: 2, windowMs: 15000 });
+  if (!rl.allowed) throw new Error('Muitas ações seguidas. Aguarde alguns segundos e tente novamente.');
+
+  if (!isFirebaseConfigured()) {
+    const all = safeGetArray<Appointment>(appointmentsKey);
+    const idx = all.findIndex((a) => a.id === appointmentId);
+    if (idx < 0) return;
+    const current = all[idx];
+    const hasConflict = all.some(
+      (a) =>
+        a.id !== appointmentId &&
+        a.professionalId === professionalId &&
+        a.status !== 'cancelado' &&
+        overlaps(startAt, endAt, a.startAt, a.endAt),
+    );
+    if (hasConflict) throw new Error('Este horário acabou de ser ocupado. Escolha outro horário.');
+
+    all[idx] = {
+      ...current,
+      professionalId,
+      professionalName,
+      startAt,
+      endAt,
+      status: 'pendente',
+      updatedAt: Date.now(),
+    };
+    safeSetArray(appointmentsKey, all);
+    return;
+  }
+
+  const db = getFirebaseDb();
+  if (!db) throw new Error('Firebase indisponível');
+
+  await runTransaction(db, async (tx) => {
+    const start = dayjs(startAt).startOf('day').valueOf();
+    const end = dayjs(startAt).endOf('day').valueOf();
+    const q = query(
+      collection(db, 'appointments'),
+      where('professionalId', '==', professionalId),
+      where('startAt', '>=', start),
+      where('startAt', '<=', end),
+    );
+    const snap = await getDocs(q);
+    const conflicts = snap.docs.some((d) => {
+      if (d.id === appointmentId) return false;
+      const data = d.data() as Appointment;
+      if (data.status === 'cancelado') return false;
+      return overlaps(startAt, endAt, data.startAt, data.endAt);
+    });
+    if (conflicts) throw new Error('Este horário acabou de ser ocupado. Escolha outro horário.');
+
+    tx.update(doc(db, 'appointments', appointmentId), {
+      professionalId,
+      professionalName,
+      startAt,
+      endAt,
+      status: 'pendente',
+      updatedAt: Date.now(),
+    });
+  });
+}
+
+export async function saveReview(input: Omit<AppointmentReview, 'id' | 'createdAt'>): Promise<AppointmentReview> {
+  if (!input.appointmentId) throw new Error('Agendamento inválido');
+  if (input.rating < 1 || input.rating > 5) throw new Error('Selecione de 1 a 5 estrelas');
+
+  if (!isFirebaseConfigured()) {
+    const all = safeGetArray<AppointmentReview>(reviewsKey);
+    const review: AppointmentReview = { ...input, id: `local_${Date.now()}`, createdAt: Date.now() };
+    safeSetArray(reviewsKey, [review, ...all]);
+    return review;
+  }
+
+  const db = getFirebaseDb();
+  if (!db) throw new Error('Firebase indisponível');
+
+  const ref = doc(collection(db, 'reviews'));
+  const payload: Omit<AppointmentReview, 'id'> = { ...input, createdAt: Date.now() };
+  await setDoc(ref, payload);
+  return { id: ref.id, ...payload };
+}
+
+export async function createWaitlistEntry(input: Omit<WaitlistEntry, 'id' | 'createdAt'>): Promise<WaitlistEntry> {
+  if (!input.userId) throw new Error('Sessão expirada');
+  if (!input.dateKey) throw new Error('Data inválida');
+  const rl = consumeRateLimit({ key: `waitlist:${input.userId}`, max: 2, windowMs: 15000 });
+  if (!rl.allowed) throw new Error('Muitas solicitações seguidas. Aguarde alguns segundos e tente novamente.');
+
+  if (!isFirebaseConfigured()) {
+    const all = safeGetArray<WaitlistEntry>(waitlistKey);
+    const exists = all.some(
+      (w) =>
+        w.userId === input.userId &&
+        w.dateKey === input.dateKey &&
+        w.serviceId === input.serviceId &&
+        w.professionalId === input.professionalId,
+    );
+    if (exists) throw new Error('Você já está na lista de espera para esta data');
+    const entry: WaitlistEntry = { ...input, id: `local_${Date.now()}`, createdAt: Date.now() };
+    safeSetArray(waitlistKey, [entry, ...all]);
+    return entry;
+  }
+
+  const db = getFirebaseDb();
+  if (!db) throw new Error('Firebase indisponível');
+
+  const ref = doc(collection(db, 'waitlist'));
+  const payload = { ...input, createdAt: Date.now() };
+  await setDoc(ref, payload);
+  return { id: ref.id, ...(payload as Omit<WaitlistEntry, 'id'>) };
+}
+
+export function computeLoyalty(appointments: Appointment[]): LoyaltySummary {
+  const points = appointments.filter((a) => a.status === 'concluido').length;
+  const nextRewardAt = 10;
+  return { points, nextRewardAt };
+}

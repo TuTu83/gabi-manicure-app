@@ -1,0 +1,28 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta content="text/html; charset=utf-8" http-equiv="Content-Type" />
+    <meta name="viewport" content="width=375,user-scalable=no" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-touch-fullscreen" content="yes" />
+    <meta name="format-detection" content="telephone=no,address=no" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="white" />
+    <meta http-equiv="X-UA-Compatible" content="IE=edge,chrome=1" />
+    <title>Gabi Manicure</title>
+    <script>
+      // Fixa o fontSize do HTML para evitar alterações por scripts de layout
+      (function() {
+        var html = document.documentElement;
+        html.style.fontSize = '18px';
+        Object.defineProperty(html.style, 'fontSize', {
+          get: function() { return '18px'; },
+          set: function() { /* Ignorar qualquer alteração */ }
+        });
+      })();
+      <%= htmlWebpackPlugin.options.script %>
+    </script>
+  </head>
+  <body>
+    <div id="app"></div>
+  </body>
+</html>

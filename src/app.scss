@@ -1,0 +1,68 @@
+@use '@/styles/compat.scss';
+@use '@/styles/variables.scss' as *;
+
+// Estilos globais
+.appRoot {
+  min-height: 100vh;
+}
+
+.themeLight {
+  --color-primary: #{$color-primary};
+  --color-primary-light: #{$color-primary-light};
+  --color-primary-dark: #{$color-primary-dark};
+  --color-accent: #{$color-accent};
+
+  --color-bg-page: #{$color-bg-page};
+  --color-bg-card: #{$color-bg-card};
+  --color-bg-hover: #{$color-bg-hover};
+
+  --color-text-primary: #{$color-text-primary};
+  --color-text-secondary: #{$color-text-secondary};
+  --color-text-tertiary: #{$color-text-tertiary};
+  --color-text-white: #{$color-text-white};
+
+  --color-border: #{$color-border};
+  --color-divider: #{$color-divider};
+  --color-success: #{$color-success};
+  --color-warning: #{$color-warning};
+  --color-error: #{$color-error};
+}
+
+.themeDark {
+  --color-primary: #ff7fb3;
+  --color-primary-light: #ff9bc5;
+  --color-primary-dark: #e8558f;
+  --color-accent: #d8b24a;
+
+  --color-bg-page: #0f0b12;
+  --color-bg-card: #19131d;
+  --color-bg-hover: #231b29;
+
+  --color-text-primary: #f3eef6;
+  --color-text-secondary: #cfc6d7;
+  --color-text-tertiary: #a59caf;
+  --color-text-white: #ffffff;
+
+  --color-border: #2c2332;
+  --color-divider: #231b29;
+  --color-success: #2ad870;
+  --color-warning: #ffb020;
+  --color-error: #ff5b6a;
+}
+
+page {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'PingFang SC', 'Hiragino Sans GB', sans-serif;
+  font-size: $font-size-md;
+  line-height: $line-height-normal;
+  color: var(--color-text-primary);
+  background-color: var(--color-bg-page);
+}
+
+button {
+  font-family: inherit;
+}
+
+input {
+  font-family: inherit;
+  color: var(--color-text-primary);
+}

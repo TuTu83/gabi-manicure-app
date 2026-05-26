@@ -1,0 +1,31 @@
+@use '@/styles/variables.scss' as *;
+
+.row {
+  display: flex;
+  align-items: center;
+  gap: 12rpx;
+}
+
+.starBtn {
+  @include button-reset;
+  width: 72rpx;
+  height: 72rpx;
+  border-radius: 36rpx;
+  background: var(--color-bg-hover);
+  border: 1rpx solid var(--color-border);
+  transition: all $transition-base;
+
+  &:active {
+    opacity: 0.9;
+    transform: scale(0.98);
+  }
+}
+
+.starText {
+  font-size: 32rpx;
+  color: var(--color-text-tertiary);
+}
+
+.starTextActive {
+  color: var(--color-accent);
+}

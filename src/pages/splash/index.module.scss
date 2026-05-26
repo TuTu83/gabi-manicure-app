@@ -1,0 +1,59 @@
+@use '@/styles/variables.scss' as *;
+
+.container {
+  min-height: 100vh;
+  padding: 0 $page-padding;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  background: linear-gradient(180deg, rgba(255, 127, 179, 0.22) 0%, var(--color-bg-page) 55%, var(--color-bg-page) 100%);
+}
+
+.brandCard {
+  width: 100%;
+  max-width: $max-content-width;
+  background: var(--color-bg-card);
+  border: 1rpx solid var(--color-border);
+  border-radius: $radius-xl;
+  box-shadow: $shadow-card;
+  padding: 64rpx 48rpx;
+}
+
+.brandName {
+  font-size: 48rpx;
+  font-weight: $font-weight-semibold;
+  color: var(--color-text-primary);
+  text-align: center;
+  margin-bottom: $spacing-sm;
+}
+
+.tagline {
+  font-size: $font-size-sm;
+  color: var(--color-text-tertiary);
+  text-align: center;
+  line-height: $line-height-loose;
+  margin-bottom: 56rpx;
+}
+
+.loadingRow {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.loadingDot {
+  width: 12rpx;
+  height: 12rpx;
+  border-radius: $radius-round;
+  background: var(--color-primary);
+  opacity: 0.9;
+  margin: 0 8rpx;
+}
+
+.hint {
+  margin-top: 48rpx;
+  font-size: 24rpx;
+  color: var(--color-text-tertiary);
+  text-align: center;
+}

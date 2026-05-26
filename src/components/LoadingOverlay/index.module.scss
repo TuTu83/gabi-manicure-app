@@ -1,0 +1,36 @@
+@use '@/styles/variables.scss' as *;
+
+.mask {
+  position: fixed;
+  left: 0;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.35);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 999;
+}
+
+.card {
+  width: 560rpx;
+  background: var(--color-bg-card);
+  border: 1rpx solid var(--color-border);
+  border-radius: $radius-xl;
+  box-shadow: $shadow-float;
+  padding: 40rpx;
+}
+
+.title {
+  font-size: 30rpx;
+  font-weight: $font-weight-semibold;
+  color: var(--color-text-primary);
+  margin-bottom: 12rpx;
+}
+
+.desc {
+  font-size: 24rpx;
+  color: var(--color-text-tertiary);
+  line-height: $line-height-loose;
+}

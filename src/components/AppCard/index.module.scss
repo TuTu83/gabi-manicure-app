@@ -1,0 +1,13 @@
+@use '@/styles/variables.scss' as *;
+
+.card {
+  width: 100%;
+  background: var(--color-bg-card);
+  border: 1rpx solid var(--color-border);
+  border-radius: $radius-xl;
+  box-shadow: $shadow-card;
+}
+
+.inner {
+  padding: 40rpx;
+}

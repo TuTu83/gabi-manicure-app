@@ -1,0 +1,21 @@
+@use '@/styles/variables.scss' as *;
+
+.row {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  margin-bottom: 16rpx;
+}
+
+.title {
+  font-size: 32rpx;
+  font-weight: $font-weight-semibold;
+  color: var(--color-text-primary);
+  line-height: $line-height-tight;
+}
+
+.action {
+  font-size: 24rpx;
+  color: var(--color-primary);
+  line-height: $line-height-tight;
+}
