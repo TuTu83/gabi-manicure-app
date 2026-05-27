@@ -138,11 +138,6 @@ function registerFailedAttempt(identifier: string): void {
   setAttemptState(key, next);
 }
 
-function phoneToAliasEmail(phoneE164: string): string {
-  const digits = phoneE164.replace(/\D/g, '');
-  return `${digits}@phone.gm.app`;
-}
-
 function readLocalUsers(): LocalUserRecord[] {
   try {
     const raw = Taro.getStorageSync(usersKey);
@@ -168,68 +163,7 @@ function deleteLocalUserById(userId: string): void {
   writeLocalUsers(next);
 }
 
-export async function registerWithPhonePassword(input: {
-  fullName: string;
-  socialName?: string;
-  email?: string;
-  phoneRaw: string;
-  password: string;
-}): Promise<UserProfile> {
-  const phoneE164 = normalizePhoneBRToE164(input.phoneRaw);
-  if (!phoneE164) throw new Error('Telefone inválido');
-  const emailProvided = (input.email || '').trim().toLowerCase();
-
-  if (isFirebaseConfigured()) {
-    const auth = getFirebaseAuth();
-    const db = getFirebaseDb();
-    if (!auth || !db) throw new Error('Firebase indisponível');
-
-    const qPhone = query(collection(db, 'users'), where('phoneE164', '==', phoneE164), limit(1));
-    const phoneSnap = await getDocs(qPhone);
-    if (!phoneSnap.empty) throw new Error('Este telefone já possui cadastro');
-
-    const accountEmail = emailProvided || phoneToAliasEmail(phoneE164);
-    const result = await createUserWithEmailAndPassword(auth, accountEmail, input.password);
-
-    const profile: UserProfile = {
-      id: result.user.uid,
-      fullName: input.fullName.trim(),
-      socialName: input.socialName?.trim() || undefined,
-      phoneE164,
-      email: emailProvided || accountEmail,
-      provider: 'password',
-      createdAt: Date.now(),
-    };
-
-    await setDoc(doc(db, 'users', profile.id), profile, { merge: true });
-    return profile;
-  }
-
-  const users = readLocalUsers();
-  const existing = users.find((u) => u.profile.phoneE164 === phoneE164);
-  if (existing) throw new Error('Este telefone já possui cadastro');
-  if (emailProvided) {
-    const emailExists = users.some((u) => (u.profile.email || '').toLowerCase() === emailProvided);
-    if (emailExists) throw new Error('Este e-mail já está em uso');
-  }
-
-  const profile: UserProfile = {
-    id: `local_${Date.now()}`,
-    fullName: input.fullName.trim(),
-    socialName: input.socialName?.trim() || undefined,
-    phoneE164,
-    email: emailProvided || undefined,
-    provider: 'password',
-    createdAt: Date.now(),
-  };
-
-  const passwordSalt = randomSaltHex();
-  const passwordIterations = 120000;
-  const passwordHash = await computePasswordHash({ password: input.password, saltHex: passwordSalt, iterations: passwordIterations });
-  users.push({ profile, passwordHash, passwordSalt, passwordIterations, passwordAlgo: 'pbkdf2' });
-  writeLocalUsers(users);
-  return profile;
-}
+// Phone-as-auth flows removed: use email/password only.
 
 export async function registerWithEmailPassword(input: {
   name: string;
@@ -249,34 +183,39 @@ export async function registerWithEmailPassword(input: {
   const db = getFirebaseDb();
   if (!auth || !db) throw new Error('Firebase indisponível');
 
-  const result = await createUserWithEmailAndPassword(auth, email, input.password);
-  const now = Date.now();
-  const profile: UserProfile = {
-    id: result.user.uid,
-    fullName: name,
-    phoneE164: phoneE164 || '',
-    email,
-    provider: 'password',
-    createdAt: now,
-    role: 'user',
-  };
-
-  await setDoc(
-    doc(db, 'users', profile.id),
-    {
-      ...profile,
-      name,
-      phone: phoneE164 || '',
+  try {
+    const result = await createUserWithEmailAndPassword(auth, email, input.password);
+    const now = Date.now();
+    const profile: UserProfile = {
+      id: result.user.uid,
+      fullName: name,
+      phoneE164: phoneE164 || '',
+      email,
+      provider: 'password',
       createdAt: now,
-    } as any,
-    { merge: true },
-  );
-  return profile;
+      role: 'user',
+    };
+
+    await setDoc(
+      doc(db, 'users', profile.id),
+      {
+        ...profile,
+        name,
+        phone: phoneE164 || '',
+        createdAt: now,
+      } as any,
+      { merge: true },
+    );
+    return profile;
+  } catch (error: any) {
+    console.error('[Auth][register] erro ao criar conta', error);
+    throw new Error(error?.message || 'Erro ao criar conta');
+  }
 }
 
 export async function loginWithIdentifier(identifier: string, password: string): Promise<UserProfile> {
   const trimmed = (identifier || '').trim().toLowerCase();
-  if (!trimmed) throw new Error('Informe telefone ou Gmail');
+  if (!trimmed) throw new Error('Informe seu e-mail');
   checkRateLimit(trimmed);
 
   if (isFirebaseConfigured()) {
@@ -286,7 +225,6 @@ export async function loginWithIdentifier(identifier: string, password: string):
 
     if (!trimmed.includes('@')) throw new Error('Informe seu e-mail');
     const email = trimmed;
-
     try {
       const result = await signInWithEmailAndPassword(auth, email, password);
       const snap = await getDoc(doc(db, 'users', result.user.uid));
@@ -295,25 +233,20 @@ export async function loginWithIdentifier(identifier: string, password: string):
       if (profile.blocked) throw new Error('Sua conta está bloqueada. Fale com a administradora.');
       clearAttemptState(trimmed);
       return profile;
-    } catch (error) {
+    } catch (error: any) {
       registerFailedAttempt(trimmed);
-      throw error;
+      console.error('[Auth][login] erro ao entrar', { identifier: trimmed, error });
+      throw new Error(error?.message || 'Erro ao entrar');
     }
   }
-
-  const phoneE164 = trimmed.includes('@') ? null : normalizePhoneBRToE164(trimmed);
+  // Local (non-Firebase) fallback: only allow email-based login
   const users = readLocalUsers();
-  const user = trimmed.includes('@')
-    ? users.find((u) => u.profile.email?.toLowerCase() === trimmed)
-    : users.find((u) => u.profile.phoneE164 === phoneE164);
+  const user = users.find((u) => (u.profile.email || '').toLowerCase() === trimmed);
   if (!user) throw new Error('Conta não encontrada');
   const algo = user.passwordAlgo || 'legacy';
   const saltHex = user.passwordSalt || '';
   const iterations = user.passwordIterations || 120000;
-  const expected =
-    algo === 'pbkdf2' && saltHex
-      ? await computePasswordHash({ password, saltHex, iterations })
-      : legacyHashPassword(password);
+  const expected = algo === 'pbkdf2' && saltHex ? await computePasswordHash({ password, saltHex, iterations }) : legacyHashPassword(password);
   if (user.passwordHash !== expected) {
     registerFailedAttempt(trimmed);
     throw new Error('Senha inválida');
@@ -416,27 +349,7 @@ export async function updateUserPhone(userId: string, phoneRaw: string): Promise
   return next;
 }
 
-export async function resetPasswordByPhone(phoneRaw: string, newPassword: string): Promise<void> {
-  const phoneE164 = normalizePhoneBRToE164(phoneRaw);
-  if (!phoneE164) throw new Error('Telefone inválido');
-
-  if (isFirebaseConfigured()) {
-    const auth = getFirebaseAuth();
-    if (!auth) throw new Error('Firebase indisponível');
-    if (!auth.currentUser) throw new Error('Faça login novamente para atualizar sua senha');
-    await updatePassword(auth.currentUser, newPassword);
-    return;
-  }
-
-  const users = readLocalUsers();
-  const idx = users.findIndex((u) => u.profile.phoneE164 === phoneE164);
-  if (idx < 0) throw new Error('Conta não encontrada');
-  const passwordSalt = randomSaltHex();
-  const passwordIterations = 120000;
-  const passwordHash = await computePasswordHash({ password: newPassword, saltHex: passwordSalt, iterations: passwordIterations });
-  users[idx] = { ...users[idx], passwordHash, passwordSalt, passwordIterations, passwordAlgo: 'pbkdf2' };
-  writeLocalUsers(users);
-}
+// Phone-based password reset removed. Use email reset via `sendPasswordResetEmailLink`.
 
 export async function sendPasswordResetEmailLink(emailRaw: string): Promise<void> {
   const email = (emailRaw || '').trim().toLowerCase();

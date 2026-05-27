@@ -74,7 +74,7 @@ function RegisterPage() {
     <View className={styles.container}>
       <View className={styles.header}>
         <Text className={styles.title}>Criar sua conta</Text>
-        <Text className={styles.subtitle}>Confirme seu telefone com um código de 6 dígitos.</Text>
+        <Text className={styles.subtitle}>Crie sua conta usando e-mail e senha.</Text>
       </View>
 
       <View className={styles.card}>
@@ -139,7 +139,7 @@ function RegisterPage() {
         {errorText ? <Text className={styles.errorText}>{errorText}</Text> : null}
 
         <Button className={styles.primaryBtn} loading={loading} onClick={handleContinue}>
-          <Text className={styles.primaryBtnText}>Enviar código</Text>
+          <Text className={styles.primaryBtnText}>Criar conta</Text>
         </Button>
 
         <Text className={styles.footerLink} onClick={() => Taro.redirectTo({ url: '/pages/auth/login/index' })}>

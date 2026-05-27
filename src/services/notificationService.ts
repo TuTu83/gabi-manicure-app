@@ -1,6 +1,6 @@
 import Taro from '@tarojs/taro';
 import { addDoc, collection, doc, onSnapshot, query, updateDoc, where } from 'firebase/firestore';
-import { getFirebaseDb, isFirebaseConfigured } from '@/services/firebase';
+import { getFirebaseDb, isFirebaseConfigured, removeUndefinedFields } from '@/services/firebase';
 import type { Appointment, InAppNotification, NotificationType } from '@/types/booking';
 import { getLocalSettings } from '@/services/settingsService';
 
@@ -90,7 +90,7 @@ export async function createNotification(params: {
   body: string;
   appointmentId?: string;
 }): Promise<void> {
-  const payload: Omit<InAppNotification, 'id'> = {
+  const payloadRaw: Omit<InAppNotification, 'id'> = {
     target: params.target,
     targetUserId: params.targetUserId,
     type: params.type,
@@ -99,6 +99,7 @@ export async function createNotification(params: {
     createdAt: Date.now(),
     appointmentId: params.appointmentId,
   };
+  const payload = removeUndefinedFields(payloadRaw);
 
   if (!isFirebaseConfigured()) {
     const current = safeGetLocal();

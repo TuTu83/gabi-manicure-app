@@ -14,6 +14,23 @@ export interface FirebaseClientConfig {
   storageBucket?: string;
 }
 
+export function removeUndefinedFields<T>(value: T): T {
+  if (value === undefined) return undefined as any;
+  if (value === null) return value;
+  if (Array.isArray(value)) {
+    return value.map((v) => removeUndefinedFields(v)) as any;
+  }
+  if (typeof value === 'object') {
+    const out: any = {};
+    for (const [k, v] of Object.entries(value as any)) {
+      if (v === undefined) continue;
+      out[k] = removeUndefinedFields(v);
+    }
+    return out;
+  }
+  return value;
+}
+
 function isFirebaseDebugEnabled(): boolean {
   try {
     if (typeof __GM_FIREBASE_DEBUG__ !== 'undefined' && String(__GM_FIREBASE_DEBUG__ || '') === '1') return true;

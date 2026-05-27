@@ -30,6 +30,10 @@ export default defineAppConfig({
         text: 'Agendar'
       },
       {
+        pagePath: 'pages/admin/index',
+        text: 'Admin'
+      },
+      {
         pagePath: 'pages/profile/index',
         text: 'Perfil'
       }

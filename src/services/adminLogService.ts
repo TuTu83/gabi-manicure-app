@@ -1,6 +1,6 @@
 import Taro from '@tarojs/taro';
 import { addDoc, collection } from 'firebase/firestore';
-import { getFirebaseDb, isFirebaseConfigured } from '@/services/firebase';
+import { getFirebaseDb, isFirebaseConfigured, removeUndefinedFields } from '@/services/firebase';
 import type { AdminLogRecord } from '@/types/adminLog';
 import type { UserProfile } from '@/types/user';
 
@@ -25,7 +25,7 @@ function safeSetLocal(items: AdminLogRecord[]): void {
 }
 
 export async function createAdminLog(params: Omit<AdminLogRecord, 'id' | 'createdAt' | 'actorUserId' | 'actorEmail'> & { actor: UserProfile }): Promise<void> {
-  const payload: Omit<AdminLogRecord, 'id'> = {
+  const payloadRaw: Omit<AdminLogRecord, 'id'> = {
     action: params.action,
     entityType: params.entityType,
     entityId: params.entityId,
@@ -35,6 +35,7 @@ export async function createAdminLog(params: Omit<AdminLogRecord, 'id' | 'create
     summary: params.summary,
     meta: params.meta,
   };
+  const payload = removeUndefinedFields(payloadRaw);
 
   if (!isFirebaseConfigured()) {
     const current = safeGetLocal();
@@ -51,4 +52,3 @@ export async function createAdminLog(params: Omit<AdminLogRecord, 'id' | 'create
     console.error('[Logs] falha ao salvar log no Firestore', error);
   }
 }
-

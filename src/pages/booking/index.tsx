@@ -6,7 +6,8 @@ import AppCard from '@/components/AppCard';
 import LoadingOverlay from '@/components/LoadingOverlay';
 import SectionHeader from '@/components/SectionHeader';
 import StarRating from '@/components/StarRating';
-import { fetchProfessionals, fetchServices } from '@/services/catalogService';
+import { fetchProfessionals } from '@/services/catalogService';
+import { subscribeAllServices } from '@/services/adminService';
 import {
   buildSlotsForDay,
   cancelAppointment,
@@ -24,6 +25,7 @@ import {
   subscribeUserAppointments,
 } from '@/services/appointmentService';
 import { createNotification, maybeSendAppointmentReminder, requestNotificationPermission } from '@/services/notificationService';
+import { startOfDayMs } from '@/services/financeService';
 import { useAppStore } from '@/store/appStore';
 import type { Appointment, AppointmentStatus, Professional, ServiceItem } from '@/types/booking';
 import type { PaymentMethod } from '@/types/finance';
@@ -35,13 +37,18 @@ function BookingPage() {
   const appName = useAppStore((s) => s.appName);
 
   const [tab, setTab] = useState<'agendar' | 'meus' | 'historico'>('agendar');
+  const [bookingStep, setBookingStep] = useState(1);
   const [services, setServices] = useState<ServiceItem[]>([]);
   const [professionals, setProfessionals] = useState<Professional[]>([]);
   const [appointments, setAppointments] = useState<Appointment[]>([]);
 
   const [selectedServiceIds, setSelectedServiceIds] = useState<string[]>([]);
   const [selectedProfessionalId, setSelectedProfessionalId] = useState<string>('');
-  const [selectedDateMs, setSelectedDateMs] = useState<number>(() => Date.now());
+  const [selectedDateMs, setSelectedDateMs] = useState<number>(() => startOfDayMs(Date.now()));
+  const [calendarMonthMs, setCalendarMonthMs] = useState<number>(() => {
+    const now = new Date();
+    return new Date(now.getFullYear(), now.getMonth(), 1).getTime();
+  });
   const [selectedSlotStartAt, setSelectedSlotStartAt] = useState<number | null>(null);
   const [bookingNotes, setBookingNotes] = useState('');
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>('pix');
@@ -59,10 +66,22 @@ function BookingPage() {
   const [reviewRating, setReviewRating] = useState(0);
   const [reviewComment, setReviewComment] = useState('');
 
+  const displayedServices = useMemo(
+    () => services.filter((s) => (s.name || '').trim().length > 0 && (s.priceCents ?? 0) > 0),
+    [services],
+  );
+  const visibleServiceIds = useMemo(
+    () => new Set(displayedServices.map((s) => s.id)),
+    [displayedServices],
+  );
+  useEffect(() => {
+    setSelectedServiceIds((prev) => prev.filter((id) => visibleServiceIds.has(id)));
+  }, [visibleServiceIds]);
+
   const selectedServices = useMemo(() => {
     const set = new Set(selectedServiceIds);
-    return services.filter((s) => set.has(s.id));
-  }, [services, selectedServiceIds]);
+    return displayedServices.filter((s) => set.has(s.id));
+  }, [displayedServices, selectedServiceIds]);
   const selectedService = useMemo(() => selectedServices[0] || null, [selectedServices]);
   const selectedProfessional = useMemo(
     () => professionals.find((p) => p.id === selectedProfessionalId) || null,
@@ -72,8 +91,65 @@ function BookingPage() {
     () => selectedServices.reduce((sum, s) => sum + (s.durationMinutes || 0), 0),
     [selectedServices],
   );
+  const firstDayOfCalendarMonth = useMemo(() => {
+    const date = new Date(calendarMonthMs);
+    return new Date(date.getFullYear(), date.getMonth(), 1).getTime();
+  }, [calendarMonthMs]);
+  const monthTitle = useMemo(
+    () => new Intl.DateTimeFormat('pt-BR', { month: 'long', year: 'numeric' }).format(new Date(firstDayOfCalendarMonth)),
+    [firstDayOfCalendarMonth],
+  );
+  const calendarDays = useMemo(() => {
+    const start = new Date(firstDayOfCalendarMonth);
+    const dayOfWeek = (start.getDay() + 6) % 7;
+    const beginMs = startOfDayMs(start.getTime() - dayOfWeek * 24 * 60 * 60 * 1000);
+    return Array.from({ length: 42 }, (_, idx) => {
+      const dateMs = startOfDayMs(beginMs + idx * 24 * 60 * 60 * 1000);
+      const date = new Date(dateMs);
+      return {
+        dateMs,
+        day: date.getDate(),
+        inMonth: date.getMonth() === start.getMonth(),
+        isToday: dateMs === startOfDayMs(Date.now()),
+        isPast: dateMs < startOfDayMs(Date.now()),
+      };
+    });
+  }, [firstDayOfCalendarMonth]);
   const totalPriceCents = useMemo(() => selectedServices.reduce((sum, s) => sum + (s.priceCents || 0), 0), [selectedServices]);
   const combinedServiceName = useMemo(() => selectedServices.map((s) => s.name).join(' + '), [selectedServices]);
+
+  const bookingSteps = ['Serviços', 'Data', 'Horários', 'Pagamento', 'Confirmar'];
+  const selectedDateLabel = `${formatDateLabel(selectedDateMs)}${selectedSlotStartAt ? ` às ${formatTime(selectedSlotStartAt)}` : ''}`;
+  const paymentLabel =
+    paymentMethod === 'pix'
+      ? 'PIX'
+      : paymentMethod === 'dinheiro'
+      ? 'Dinheiro'
+      : paymentMethod === 'credito'
+      ? 'Cartão (Crédito)'
+      : paymentMethod === 'debito'
+      ? 'Cartão (Débito)'
+      : 'Outro';
+
+  const selectService = (serviceId: string) => {
+    setSelectedServiceIds((prev) => {
+      const has = prev.includes(serviceId);
+      const next = has ? prev.filter((id) => id !== serviceId) : [...prev, serviceId];
+      return next;
+    });
+    setSelectedSlotStartAt(null);
+  };
+
+  const selectDate = (dateMs: number) => {
+    const nextDate = startOfDayMs(dateMs);
+    setSelectedDateMs(nextDate);
+    setSelectedSlotStartAt(null);
+    setCalendarMonthMs(new Date(nextDate).setDate(1));
+  };
+
+  const canProceedStep1 = selectedServices.length > 0;
+  const canProceedStep2 = Boolean(selectedProfessional && selectedDateMs);
+  const canProceedStep3 = Boolean(selectedSlotStartAt);
 
   const userId = currentUser?.id || '';
 
@@ -110,25 +186,32 @@ function BookingPage() {
 
   useEffect(() => {
     let mounted = true;
-    const load = async () => {
-      setLoading(true);
-      setErrorText(null);
+    setLoading(true);
+    setErrorText(null);
+
+    const unsubscribeServices = subscribeAllServices((items) => {
+      if (!mounted) return;
+      setServices(items);
+      setLoading(false);
+    });
+
+    const loadProfessionals = async () => {
       try {
-        const [s, p] = await Promise.all([fetchServices(), fetchProfessionals()]);
+        const p = await fetchProfessionals();
         if (!mounted) return;
-        setServices(s);
         setProfessionals(p);
-        if (!selectedServiceIds.length && s.length) setSelectedServiceIds([s[0].id]);
         if (!selectedProfessionalId && p.length) setSelectedProfessionalId(p[0].id);
       } catch (error: any) {
-        setErrorText(error?.message || 'Não foi possível carregar o catálogo');
-      } finally {
-        setLoading(false);
+        if (!mounted) return;
+        setErrorText(error?.message || 'Não foi possível carregar os profissionais');
       }
     };
-    load();
+
+    loadProfessionals();
+
     return () => {
       mounted = false;
+      unsubscribeServices();
     };
   }, []);
 
@@ -158,9 +241,11 @@ function BookingPage() {
   }, [selectedDateMs, selectedProfessionalId]);
 
   const resetBooking = () => {
+    setSelectedServiceIds([]);
     setSelectedSlotStartAt(null);
     setBookingNotes('');
     setPaymentMethod('pix');
+    setBookingStep(1);
   };
 
   const handleConfirmBooking = async () => {
@@ -202,7 +287,7 @@ function BookingPage() {
         professionalName: selectedProfessional.name,
         startAt,
         endAt,
-        notes: bookingNotes.trim() || undefined,
+        notes: bookingNotes.trim() || null,
       });
 
       await createNotification({
@@ -436,185 +521,291 @@ function BookingPage() {
 
         {tab === 'agendar' ? (
           <>
-            <SectionHeader title="1) Serviços" />
-            {services.length ? (
-              <View className={styles.grid}>
-                {services.map((s) => {
-                  const active = selectedServiceIds.includes(s.id);
-                  const imageKey = `${s.id}_${s.imageUrl || ''}`;
-                  const showImage = Boolean(s.imageUrl) && !brokenServiceImages[imageKey];
-                  return (
-                    <View
-                      key={s.id}
-                      className={classnames(styles.serviceItem, active && styles.serviceItemActive)}
-                      onClick={() => {
-                        setSelectedServiceIds((prev) => {
-                          const has = prev.includes(s.id);
-                          const next = has ? prev.filter((id) => id !== s.id) : [...prev, s.id];
-                          return next;
-                        });
-                        setSelectedSlotStartAt(null);
-                      }}
-                    >
-                      {showImage ? (
-                        <Image
-                          className={styles.serviceImage}
-                          src={s.imageUrl}
-                          mode="aspectFill"
-                          onError={() => setBrokenServiceImages((prev) => ({ ...prev, [imageKey]: true }))}
-                        />
-                      ) : (
-                        <View className={styles.serviceImageFallback} />
-                      )}
-                      <Text className={styles.serviceName}>{s.name}</Text>
-                      <Text className={styles.serviceDesc}>{s.description}</Text>
-                      <View className={styles.metaRow}>
-                        <Text className={styles.metaText}>{priceFromCents(s.priceCents)}</Text>
+            <View className={styles.stepHeader}>
+              {bookingSteps.map((stepLabel, index) => {
+                const stepNum = index + 1;
+                return (
+                  <View key={stepLabel} className={classnames(styles.stepItem, bookingStep === stepNum && styles.stepItemActive)}>
+                    <Text className={styles.stepNumber}>{stepNum}</Text>
+                    <Text className={styles.stepTitle}>{stepLabel}</Text>
+                  </View>
+                );
+              })}
+            </View>
+
+            <View className={styles.stepBody}>
+              {bookingStep === 1 ? (
+                <>
+                  <Text className={styles.sectionTitle}>Selecione os serviços</Text>
+                  <Text className={styles.sectionSubtitle}>Escolha um ou mais serviços criados pela administração.</Text>
+
+                  {displayedServices.length ? (
+                    <View className={styles.grid}>
+                      {displayedServices.map((s) => {
+                        const active = selectedServiceIds.includes(s.id);
+                        const imageKey = `${s.id}_${s.imageUrl || ''}`;
+                        const showImage = Boolean(s.imageUrl) && !brokenServiceImages[imageKey];
+                        return (
+                          <View
+                            key={s.id}
+                            className={classnames(styles.serviceCard, active && styles.serviceCardActive)}
+                            onClick={() => selectService(s.id)}
+                          >
+                            {showImage ? (
+                              <Image
+                                className={styles.serviceImage}
+                                src={s.imageUrl}
+                                mode="aspectFill"
+                                onError={() => setBrokenServiceImages((prev) => ({ ...prev, [imageKey]: true }))}
+                              />
+                            ) : (
+                              <View className={styles.serviceImageFallback} />
+                            )}
+                            <View className={styles.serviceCardBody}>
+                              <View className={styles.serviceCardHeader}>
+                                <Text className={styles.serviceName}>{s.name}</Text>
+                                <Text className={styles.servicePrice}>{priceFromCents(s.priceCents)}</Text>
+                              </View>
+                              <Text className={styles.serviceDesc}>{s.description}</Text>
+                              <View className={styles.serviceFooter}>
+                                <Text className={classnames(styles.badge, active ? styles.badgePrimary : styles.badge)}>
+                                  {active ? 'Selecionado' : 'Tocar para selecionar'}
+                                </Text>
+                              </View>
+                            </View>
+                          </View>
+                        );
+                      })}
+                    </View>
+                  ) : (
+                    <AppCard>
+                      <Text className={styles.desc}>Nenhum serviço disponível no momento. A administração precisa cadastrar serviços no painel.</Text>
+                    </AppCard>
+                  )}
+
+                  <View className={styles.summaryCard}>
+                    <Text className={styles.summaryLabel}>Valor total</Text>
+                    <Text className={styles.summaryValue}>{priceFromCents(totalPriceCents)}</Text>
+                  </View>
+
+                  <View className={styles.footerActions}>
+                    <Button className={classnames(styles.primaryBtn, !canProceedStep1 && styles.primaryBtnDisabled)} disabled={!canProceedStep1} onClick={() => setBookingStep(2)}>
+                      <Text className={styles.primaryBtnText}>Continuar para data</Text>
+                    </Button>
+                  </View>
+                </>
+              ) : null}
+
+              {bookingStep === 2 ? (
+                <>
+                  <Text className={styles.sectionTitle}>Escolha a data</Text>
+                  <Text className={styles.sectionSubtitle}>Selecione uma data ideal para o atendimento.</Text>
+
+                  <AppCard>
+                    <View className={styles.quickRow}>
+                      <Button className={styles.quickBtn} onClick={() => selectDate(Date.now())}>
+                        <Text className={styles.quickBtnText}>Hoje</Text>
+                      </Button>
+                      <Button className={styles.quickBtn} onClick={() => selectDate(Date.now() + 7 * 24 * 60 * 60 * 1000)}>
+                        <Text className={styles.quickBtnText}>Próxima semana</Text>
+                      </Button>
+                      <Button className={styles.quickBtn} onClick={() => selectDate(Date.now() + 14 * 24 * 60 * 60 * 1000)}>
+                        <Text className={styles.quickBtnText}>2 semanas</Text>
+                      </Button>
+                    </View>
+
+                    <View className={styles.calendarWrapper}>
+                      <View className={styles.calendarHeader}>
+                        <Button className={styles.calendarNavBtn} onClick={() => setCalendarMonthMs(new Date(new Date(calendarMonthMs).getFullYear(), new Date(calendarMonthMs).getMonth() - 1, 1).getTime())}>
+                          <Text className={styles.calendarNavText}>‹</Text>
+                        </Button>
+                        <Text className={styles.calendarMonthLabel}>{monthTitle}</Text>
+                        <Button className={styles.calendarNavBtn} onClick={() => setCalendarMonthMs(new Date(new Date(calendarMonthMs).getFullYear(), new Date(calendarMonthMs).getMonth() + 1, 1).getTime())}>
+                          <Text className={styles.calendarNavText}>›</Text>
+                        </Button>
+                      </View>
+
+                      <View className={styles.calendarWeekdays}>
+                        {['Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb', 'Dom'].map((day) => (
+                          <Text key={day} className={styles.calendarWeekday}>
+                            {day}
+                          </Text>
+                        ))}
+                      </View>
+
+                      <View className={styles.calendarGrid}>
+                        {calendarDays.map((day) => (
+                          <Button
+                            key={day.dateMs}
+                            className={classnames(
+                              styles.calendarDay,
+                              !day.inMonth && styles.calendarDayFaded,
+                              day.isPast && styles.calendarDayDisabled,
+                              selectedDateMs === day.dateMs && styles.calendarDaySelected,
+                            )}
+                            disabled={day.isPast}
+                            onClick={() => selectDate(day.dateMs)}
+                          >
+                            <Text className={styles.calendarDayText}>{day.day}</Text>
+                          </Button>
+                        ))}
                       </View>
                     </View>
-                  );
-                })}
-              </View>
-            ) : (
-              <AppCard>
-                <Text className={styles.desc}>Nenhum serviço disponível no momento. Fale com a administradora para cadastrar serviços.</Text>
-              </AppCard>
-            )}
 
-            <SectionHeader title="2) Profissional e data" />
-            <AppCard>
-              <View className={styles.pickRow}>
-                <Text className={styles.pickLabel}>Profissional</Text>
-                <Picker
-                  mode="selector"
-                  range={professionals.map((p) => p.name)}
-                  onChange={(e) => {
-                    const idx = Number(e.detail.value);
-                    const p = professionals[idx];
-                    if (!p) return;
-                    setSelectedProfessionalId(p.id);
-                    setSelectedSlotStartAt(null);
-                  }}
-                >
-                  <Text className={styles.pickValue}>{selectedProfessional?.name || 'Selecionar'}</Text>
-                </Picker>
-              </View>
-              <View style={{ height: '20rpx' }} />
-              <View className={styles.pickRow}>
-                <Text className={styles.pickLabel}>Data</Text>
-                <Picker
-                  mode="date"
-                  value={new Date(selectedDateMs).toISOString().slice(0, 10)}
-                  onChange={(e) => {
-                    const value = e.detail.value;
-                    const next = new Date(`${value}T00:00:00`).getTime();
-                    setSelectedDateMs(next);
-                    setSelectedSlotStartAt(null);
-                  }}
-                >
-                  <Text className={styles.pickValue}>{formatDateLabel(selectedDateMs)}</Text>
-                </Picker>
-              </View>
-            </AppCard>
-
-            <SectionHeader title="3) Horários disponíveis" actionText="Lista de espera" onActionClick={handleJoinWaitlist} />
-            <AppCard>
-              {slots.length ? (
-                <View className={styles.grid}>
-                  {slots.map((s) => {
-                    const active = selectedSlotStartAt === s.startAt;
-                    return (
-                      <Button
-                        key={`${s.startAt}`}
-                        className={classnames(
-                          styles.slotBtn,
-                          s.disabled && styles.slotBtnDisabled,
-                          active && styles.slotBtnActive,
-                        )}
-                        disabled={s.disabled}
-                        onClick={() => setSelectedSlotStartAt(s.startAt)}
+                    <View className={styles.pickRow}>
+                      <Text className={styles.pickLabel}>Profissional</Text>
+                      <Picker
+                        mode="selector"
+                        range={professionals.map((p) => p.name)}
+                        onChange={(e) => {
+                          const idx = Number(e.detail.value);
+                          const p = professionals[idx];
+                          if (!p) return;
+                          setSelectedProfessionalId(p.id);
+                          setSelectedSlotStartAt(null);
+                        }}
                       >
-                        <Text className={styles.slotText}>{formatTime(s.startAt)}</Text>
-                      </Button>
-                    );
-                  })}
-                </View>
-              ) : (
-                <Text className={styles.desc}>Selecione serviço(s) e profissional para ver os horários.</Text>
-              )}
-            </AppCard>
+                        <Text className={styles.pickValue}>{selectedProfessional?.name || 'Selecionar profissional'}</Text>
+                      </Picker>
+                    </View>
+                  </AppCard>
 
-            <SectionHeader title="4) Confirmar" />
-            <AppCard>
-              <View className={styles.pickRow}>
-                <Text className={styles.pickLabel}>Resumo</Text>
-                <Text className={styles.pickValue}>
-                  {combinedServiceName || '-'} • {selectedProfessional?.name || '-'}
-                </Text>
-              </View>
-              <View style={{ height: '16rpx' }} />
-              <View className={styles.pickRow}>
-                <Text className={styles.pickLabel}>Quando</Text>
-                <Text className={styles.pickValue}>
-                  {formatDateLabel(selectedDateMs)}
-                  {selectedSlotStartAt ? ` às ${formatTime(selectedSlotStartAt)}` : ''}
-                </Text>
-              </View>
-              <View style={{ height: '16rpx' }} />
-              <View className={styles.pickRow}>
-                <Text className={styles.pickLabel}>Total</Text>
-                <Text className={styles.pickValue}>{priceFromCents(totalPriceCents)}</Text>
-              </View>
-              <View style={{ height: '16rpx' }} />
-              <View className={styles.pickRow}>
-                <Text className={styles.pickLabel}>Pagamento</Text>
-                <Picker
-                  mode="selector"
-                  range={['PIX', 'Dinheiro', 'Cartão (Crédito)', 'Cartão (Débito)', 'Outro']}
-                  onChange={(e) => {
-                    const idx = Number(e.detail.value);
-                    const value = (['pix', 'dinheiro', 'credito', 'debito', 'outro'][idx] || 'pix') as PaymentMethod;
-                    setPaymentMethod(value);
-                  }}
-                >
-                  <Text className={styles.pickValue}>
-                    {paymentMethod === 'pix'
-                      ? 'PIX'
-                      : paymentMethod === 'dinheiro'
-                        ? 'Dinheiro'
-                        : paymentMethod === 'credito'
-                          ? 'Cartão (Crédito)'
-                          : paymentMethod === 'debito'
-                            ? 'Cartão (Débito)'
-                            : 'Outro'}
-                  </Text>
-                </Picker>
-              </View>
-              <View style={{ height: '16rpx' }} />
-              <Text className={styles.fieldLabel}>Observações (opcional)</Text>
-              <View className={styles.inputRow}>
-                <Input
-                  className={styles.input}
-                  value={bookingNotes}
-                  onInput={(e) => setBookingNotes(e.detail.value)}
-                  placeholder="Ex.: preferência de cor, remoção, etc."
-                />
-              </View>
+                  <View className={styles.footerActions}>
+                    <Button className={styles.secondaryBtn} onClick={() => setBookingStep(1)}>
+                      <Text className={styles.secondaryBtnText}>Voltar</Text>
+                    </Button>
+                    <Button className={classnames(styles.primaryBtn, !canProceedStep2 && styles.primaryBtnDisabled)} disabled={!canProceedStep2} onClick={() => setBookingStep(3)}>
+                      <Text className={styles.primaryBtnText}>Ir para horários</Text>
+                    </Button>
+                  </View>
+                </>
+              ) : null}
 
-              <Button className={styles.primaryBtn} onClick={handleConfirmBooking}>
-                <Text className={styles.primaryBtnText}>Confirmar agendamento</Text>
-              </Button>
-              <Button
-                className={styles.secondaryBtn}
-                onClick={() => {
-                  resetBooking();
-                  if (services.length) setSelectedServiceIds([services[0].id]);
-                  setErrorText(null);
-                }}
-              >
-                <Text className={styles.secondaryBtnText}>Limpar seleção</Text>
-              </Button>
-            </AppCard>
+              {bookingStep === 3 ? (
+                <>
+                  <Text className={styles.sectionTitle}>Selecione o horário</Text>
+                  <Text className={styles.sectionSubtitle}>Escolha um horário disponível.</Text>
+
+                  <AppCard>
+                    {slots.length ? (
+                      <View className={styles.grid}>
+                        {slots.map((s) => {
+                          const active = selectedSlotStartAt === s.startAt;
+                          return (
+                            <Button
+                              key={`${s.startAt}`}
+                              className={classnames(styles.slotBtn, s.disabled && styles.slotBtnDisabled, active && styles.slotBtnActive)}
+                              disabled={s.disabled}
+                              onClick={() => setSelectedSlotStartAt(s.startAt)}
+                            >
+                              <Text className={styles.slotText}>{formatTime(s.startAt)}</Text>
+                            </Button>
+                          );
+                        })}
+                      </View>
+                    ) : (
+                      <Text className={styles.desc}>Selecione serviços e profissional para ver os horários disponíveis.</Text>
+                    )}
+                  </AppCard>
+
+                  <View className={styles.footerActions}>
+                    <Button className={styles.secondaryBtn} onClick={() => setBookingStep(2)}>
+                      <Text className={styles.secondaryBtnText}>Voltar</Text>
+                    </Button>
+                    <Button className={classnames(styles.primaryBtn, !canProceedStep3 && styles.primaryBtnDisabled)} disabled={!canProceedStep3} onClick={() => setBookingStep(4)}>
+                      <Text className={styles.primaryBtnText}>Selecionar pagamento</Text>
+                    </Button>
+                  </View>
+                </>
+              ) : null}
+
+              {bookingStep === 4 ? (
+                <>
+                  <Text className={styles.sectionTitle}>Forma de pagamento</Text>
+                  <Text className={styles.sectionSubtitle}>Escolha como você prefere pagar.</Text>
+
+                  <AppCard>
+                    <View className={styles.paymentGrid}>
+                      {[
+                        { key: 'pix', label: 'PIX', subtitle: 'Online ou na hora' },
+                        { key: 'dinheiro', label: 'Dinheiro', subtitle: 'Presencial no dia' },
+                        { key: 'credito', label: 'Cartão Crédito', subtitle: 'Presencial no dia' },
+                        { key: 'debito', label: 'Cartão Débito', subtitle: 'Presencial no dia' },
+                      ].map((option) => {
+                        const active = paymentMethod === option.key;
+                        return (
+                          <Button
+                            key={option.key}
+                            className={classnames(styles.paymentCard, active && styles.paymentCardActive)}
+                            onClick={() => setPaymentMethod(option.key as PaymentMethod)}
+                          >
+                            <Text className={styles.paymentTitle}>{option.label}</Text>
+                            <Text className={styles.paymentSubtitle}>{option.subtitle}</Text>
+                          </Button>
+                        );
+                      })}
+                    </View>
+                  </AppCard>
+
+                  <View className={styles.footerActions}>
+                    <Button className={styles.secondaryBtn} onClick={() => setBookingStep(3)}>
+                      <Text className={styles.secondaryBtnText}>Voltar</Text>
+                    </Button>
+                    <Button className={styles.primaryBtn} onClick={() => setBookingStep(5)}>
+                      <Text className={styles.primaryBtnText}>Revisar agendamento</Text>
+                    </Button>
+                  </View>
+                </>
+              ) : null}
+
+              {bookingStep === 5 ? (
+                <>
+                  <Text className={styles.sectionTitle}>Resumo do agendamento</Text>
+                  <Text className={styles.sectionSubtitle}>Revise antes de confirmar.</Text>
+
+                  <AppCard>
+                    <View className={styles.confirmRow}>
+                      <Text className={styles.confirmLabel}>Serviços</Text>
+                      <Text className={styles.confirmValue}>{combinedServiceName || '-'}</Text>
+                    </View>
+                    <View className={styles.confirmRow}>
+                      <Text className={styles.confirmLabel}>Profissional</Text>
+                      <Text className={styles.confirmValue}>{selectedProfessional?.name || '-'}</Text>
+                    </View>
+                    <View className={styles.confirmRow}>
+                      <Text className={styles.confirmLabel}>Data e horário</Text>
+                      <Text className={styles.confirmValue}>{selectedDateLabel || '-'}</Text>
+                    </View>
+                    <View className={styles.confirmRow}>
+                      <Text className={styles.confirmLabel}>Pagamento</Text>
+                      <Text className={styles.confirmValue}>{paymentLabel}</Text>
+                    </View>
+                    <View className={styles.confirmRow}>
+                      <Text className={styles.confirmLabel}>Valor total</Text>
+                      <Text className={styles.confirmValue}>{priceFromCents(totalPriceCents)}</Text>
+                    </View>
+                    <View className={styles.fieldLabel}>Observações</View>
+                    <View className={styles.inputRow}>
+                      <Input
+                        className={styles.input}
+                        value={bookingNotes}
+                        onInput={(e) => setBookingNotes(e.detail.value)}
+                        placeholder="Ex.: preferência de cor, remoção, etc."
+                      />
+                    </View>
+                  </AppCard>
+
+                  <View className={styles.footerActions}>
+                    <Button className={styles.secondaryBtn} onClick={() => setBookingStep(4)}>
+                      <Text className={styles.secondaryBtnText}>Voltar</Text>
+                    </Button>
+                    <Button className={styles.primaryBtn} onClick={handleConfirmBooking}>
+                      <Text className={styles.primaryBtnText}>Confirmar agendamento</Text>
+                    </Button>
+                  </View>
+                </>
+              ) : null}
+            </View>
           </>
         ) : null}
 
@@ -755,7 +946,7 @@ function BookingPage() {
                 onChange={(e) => {
                   const value = e.detail.value;
                   const next = new Date(`${value}T00:00:00`).getTime();
-                  setSelectedDateMs(next);
+                  setSelectedDateMs(startOfDayMs(next));
                   setSelectedSlotStartAt(null);
                 }}
               >

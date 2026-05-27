@@ -15,6 +15,7 @@ import {
   where,
 } from 'firebase/firestore';
 import { getFirebaseDb, isFirebaseConfigured } from '@/services/firebase';
+import { removeUndefinedFields } from '@/services/firebase';
 import { getLocalSettings } from '@/services/settingsService';
 import { consumeRateLimit } from '@/services/storage';
 import { ensurePaymentForFinalizedAppointment } from '@/services/financeService';
@@ -270,14 +271,15 @@ export async function createAppointment(input: Omit<Appointment, 'id' | 'created
     if (conflicts) throw new Error('Este horário acabou de ser ocupado. Escolha outro horário.');
 
     const ref = doc(collection(db, 'appointments'));
-    const payload: Omit<Appointment, 'id'> = {
+    const payloadRaw: Omit<Appointment, 'id'> = {
       ...input,
       status: 'pendente',
       createdAt: Date.now(),
       updatedAt: Date.now(),
     };
-    tx.set(ref, payload);
-    return { id: ref.id, ...payload };
+    const payload = removeUndefinedFields(payloadRaw);
+    tx.set(ref, payload as any);
+    return { id: ref.id, ...(payload as any) };
   });
 
   return appointment;

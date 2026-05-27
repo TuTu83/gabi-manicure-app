@@ -12,7 +12,7 @@ export async function fetchServices(): Promise<ServiceItem[]> {
     const snap = await getDocs(collection(db, 'services'));
     const data = snap.docs.map((d) => ({ id: d.id, ...(d.data() as Omit<ServiceItem, 'id'>) }));
     return data
-      .filter((s) => s.active !== false)
+      .filter((s) => s.active !== false && (s.name || '').trim().length > 0 && (s.priceCents ?? 0) > 0)
       .sort((a, b) => (a.sortOrder ?? 9999) - (b.sortOrder ?? 9999));
   } catch (error) {
     console.error('[Catalogo] falha ao buscar serviços', error);

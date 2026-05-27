@@ -170,11 +170,6 @@ function ProfilePage() {
         </Button>
       </View>
 
-      <View className={styles.card}>
-        <Text className={styles.title}>{appName}</Text>
-        <Text className={styles.label}>O nome do app poderá ser alterado futuramente pelo painel administrador.</Text>
-      </View>
-
       {notificationsOpen ? (
         <View className={styles.modalMask} onClick={() => setNotificationsOpen(false)}>
           <View className={styles.modalCard} onClick={(e) => e.stopPropagation()}>

@@ -27,7 +27,7 @@ function ForgotPasswordPage() {
     <View className={styles.container}>
       <View className={styles.header}>
         <Text className={styles.title}>Recuperar senha</Text>
-        <Text className={styles.subtitle}>Confirme seu telefone para criar uma nova senha.</Text>
+        <Text className={styles.subtitle}>Envie um e-mail para redefinir sua senha.</Text>
       </View>
 
       <View className={styles.card}>

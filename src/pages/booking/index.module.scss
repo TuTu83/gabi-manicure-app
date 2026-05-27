@@ -78,13 +78,218 @@
   flex-wrap: wrap;
 }
 
+.stepHeader {
+  display: flex;
+  gap: 12rpx;
+  flex-wrap: wrap;
+  margin-bottom: 24rpx;
+}
+
+.stepItem {
+  flex: 1 1 calc(20% - 10rpx);
+  min-width: 120rpx;
+  padding: 18rpx 20rpx;
+  border-radius: $radius-xl;
+  border: 1rpx solid var(--color-border);
+  background: var(--color-bg-card);
+  display: flex;
+  flex-direction: column;
+  gap: 8rpx;
+}
+
+.stepItemActive {
+  border-color: rgba(232, 85, 143, 0.65);
+  background: rgba(232, 85, 143, 0.08);
+}
+
+.stepNumber {
+  width: 34rpx;
+  height: 34rpx;
+  border-radius: 50%;
+  background: rgba(232, 85, 143, 0.16);
+  color: var(--color-primary);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 22rpx;
+  font-weight: $font-weight-semibold;
+}
+
+.stepTitle {
+  font-size: 20rpx;
+  color: var(--color-text-secondary);
+  line-height: $line-height-tight;
+}
+
+.stepBody {
+  display: flex;
+  flex-direction: column;
+  gap: 20rpx;
+}
+
+.sectionTitle {
+  font-size: 34rpx;
+  font-weight: $font-weight-semibold;
+  color: var(--color-text-primary);
+  margin-bottom: 8rpx;
+}
+
+.sectionSubtitle {
+  font-size: 24rpx;
+  color: var(--color-text-tertiary);
+  margin-bottom: 18rpx;
+}
+
+.serviceCard {
+  width: 100%;
+  border-radius: $radius-xl;
+  border: 1rpx solid var(--color-border);
+  background: var(--color-bg-card);
+  overflow: hidden;
+  transition: all $transition-base;
+  cursor: pointer;
+}
+
+.serviceCardActive {
+  border-color: rgba(232, 85, 143, 0.65);
+  background: rgba(232, 85, 143, 0.08);
+}
+
+.serviceCardBody {
+  padding: 24rpx;
+}
+
+.serviceCardHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16rpx;
+  margin-bottom: 14rpx;
+}
+
+.servicePrice {
+  font-size: 26rpx;
+  font-weight: $font-weight-semibold;
+  color: var(--color-primary);
+}
+
+.serviceFooter {
+  margin-top: 20rpx;
+}
+
+.summaryCard {
+  width: 100%;
+  border-radius: $radius-xl;
+  border: 1rpx solid var(--color-border);
+  background: var(--color-bg-card);
+  padding: 24rpx;
+}
+
+.summaryLabel {
+  font-size: 24rpx;
+  color: var(--color-text-tertiary);
+  margin-bottom: 10rpx;
+}
+
+.summaryValue {
+  font-size: 40rpx;
+  font-weight: $font-weight-semibold;
+  color: var(--color-text-primary);
+}
+
+.footerActions {
+  display: flex;
+  gap: 12rpx;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  margin-top: 18rpx;
+}
+
+.primaryBtnDisabled {
+  opacity: 0.45;
+}
+
+.quickRow {
+  display: flex;
+  gap: 12rpx;
+  flex-wrap: wrap;
+  margin-bottom: 20rpx;
+}
+
+.quickBtn {
+  @include button-reset;
+  flex: 1 1 calc(33% - 8rpx);
+  min-width: 120rpx;
+  border-radius: 32rpx;
+  border: 1rpx solid var(--color-border);
+  background: var(--color-bg-card);
+  padding: 18rpx 18rpx;
+}
+
+.quickBtnText {
+  font-size: 24rpx;
+  color: var(--color-text-primary);
+}
+
+.paymentGrid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16rpx;
+}
+
+.paymentCard {
+  @include button-reset;
+  width: 100%;
+  min-width: 160rpx;
+  border-radius: $radius-xl;
+  border: 1rpx solid var(--color-border);
+  background: var(--color-bg-card);
+  padding: 24rpx;
+  text-align: left;
+  transition: all $transition-base;
+}
+
+.paymentCardActive {
+  border-color: rgba(232, 85, 143, 0.65);
+  background: rgba(232, 85, 143, 0.08);
+}
+
+.paymentTitle {
+  font-size: 28rpx;
+  font-weight: $font-weight-semibold;
+  color: var(--color-text-primary);
+  margin-bottom: 8rpx;
+}
+
+.paymentSubtitle {
+  font-size: 22rpx;
+  color: var(--color-text-tertiary);
+}
+
+.confirmRow {
+  display: flex;
+  justify-content: space-between;
+  gap: 16rpx;
+  margin-bottom: 18rpx;
+  flex-wrap: wrap;
+}
+
+.confirmLabel {
+  font-size: 24rpx;
+  color: var(--color-text-tertiary);
+}
+
+.confirmValue {
+  font-size: 24rpx;
+  color: var(--color-text-primary);
+  text-align: right;
+  min-width: 120rpx;
+}
+
 .tabBtn {
   @include button-reset;
   height: $button-height-sm;
   padding: 0 20rpx;
-  border-radius: 40rpx;
-  border: 1rpx solid var(--color-border);
-  background: rgba(255, 255, 255, 0.65);
   backdrop-filter: blur(16rpx);
   flex: 1 1 0;
   min-width: 210rpx;
@@ -145,19 +350,113 @@
   word-break: break-word;
 }
 
-.serviceItem {
-  width: 100%;
-  border-radius: $radius-xl;
-  border: 1rpx solid var(--color-border);
-  background: var(--color-bg-card);
-  padding: 32rpx;
-  transition: all $transition-base;
-
-  &:active {
-    opacity: 0.92;
-    transform: scale(0.985);
+  .calendarWrapper {
+    display: flex;
+    flex-direction: column;
+    gap: 16rpx;
+    margin-bottom: 20rpx;
   }
-}
+
+  .calendarHeader {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12rpx;
+  }
+
+  .calendarMonthLabel {
+    font-size: 28rpx;
+    font-weight: $font-weight-semibold;
+    color: var(--color-text-primary);
+    text-transform: capitalize;
+  }
+
+  .calendarNavBtn {
+    @include button-reset;
+    width: 62rpx;
+    height: 62rpx;
+    border-radius: 50%;
+    border: 1rpx solid var(--color-border);
+    background: var(--color-bg-card);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .calendarNavText {
+    font-size: 32rpx;
+    color: var(--color-text-primary);
+  }
+
+  .calendarWeekdays {
+    display: grid;
+    grid-template-columns: repeat(7, minmax(0, 1fr));
+    gap: 8rpx;
+    margin-bottom: 12rpx;
+  }
+
+  .calendarWeekday {
+    font-size: 18rpx;
+    text-align: center;
+    color: var(--color-text-tertiary);
+  }
+
+  .calendarGrid {
+    display: grid;
+    grid-template-columns: repeat(7, minmax(0, 1fr));
+    gap: 8rpx;
+  }
+
+  .calendarDay {
+    @include button-reset;
+    min-height: 80rpx;
+    border-radius: 18rpx;
+    border: 1rpx solid var(--color-border);
+    background: var(--color-bg-card);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: all $transition-base;
+  }
+
+  .calendarDayFaded {
+    opacity: 0.4;
+  }
+
+  .calendarDayDisabled {
+    opacity: 0.35;
+    pointer-events: none;
+  }
+
+  .calendarDaySelected {
+    border-color: rgba(232, 85, 143, 0.7);
+    background: rgba(232, 85, 143, 0.12);
+  }
+
+  .calendarDayText {
+    font-size: 24rpx;
+    color: var(--color-text-primary);
+  }
+
+  .timePreview {
+    margin-top: 20rpx;
+    display: flex;
+    flex-direction: column;
+    gap: 12rpx;
+  }
+
+  .timePreviewItem {
+    width: 100%;
+    border-radius: $radius-xl;
+    border: 1rpx solid var(--color-border);
+    background: var(--color-bg-card);
+    padding: 18rpx 16rpx;
+  }
+
+  .timePreviewText {
+    font-size: 24rpx;
+    color: var(--color-text-primary);
+  }
 
 .serviceItemActive {
   border-color: rgba(232, 85, 143, 0.55);
