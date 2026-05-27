@@ -1,30 +1,21 @@
 import React, { useState } from 'react';
 import { Button, Input, Text, View } from '@tarojs/components';
 import Taro from '@tarojs/taro';
-import { sendPhoneVerificationCode } from '@/services/authService';
-import { useAppStore } from '@/store/appStore';
-import { formatPhoneBRDisplay, normalizePhoneBRToE164, validatePhoneBR } from '@/utils/validators';
+import { sendPasswordResetEmailLink } from '@/services/authService';
 import styles from './index.module.scss';
 
 function ForgotPasswordPage() {
-  const setResetDraft = useAppStore((s) => s.setResetDraft);
-
-  const [phone, setPhone] = useState('');
+  const [email, setEmail] = useState('');
   const [errorText, setErrorText] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
   const handleSend = async () => {
     setErrorText(null);
-    const phoneErr = validatePhoneBR(phone);
-    if (phoneErr) return setErrorText(phoneErr);
-    const phoneE164 = normalizePhoneBRToE164(phone);
-    if (!phoneE164) return setErrorText('Telefone inválido');
-
     setLoading(true);
     try {
-      const verificationId = await sendPhoneVerificationCode({ phoneE164, recaptchaContainerId: 'recaptcha-forgot' });
-      setResetDraft({ phoneRaw: phone, phoneE164, verificationId });
-      Taro.navigateTo({ url: '/pages/auth/verify/index?mode=reset' });
+      await sendPasswordResetEmailLink(email);
+      Taro.showToast({ title: 'E-mail enviado', icon: 'success' });
+      Taro.redirectTo({ url: '/pages/auth/login/index' });
     } catch (error: any) {
       setErrorText(error?.message || 'Não foi possível enviar o código');
     } finally {
@@ -40,23 +31,20 @@ function ForgotPasswordPage() {
       </View>
 
       <View className={styles.card}>
-        <View id="recaptcha-forgot" />
-        <Text className={styles.fieldLabel}>Telefone com DDD</Text>
+        <Text className={styles.fieldLabel}>E-mail</Text>
         <View className={styles.inputRow}>
           <Input
             className={styles.input}
-            value={phone}
-            type="text"
-            maxlength={20}
-            onInput={(e) => setPhone(formatPhoneBRDisplay(e.detail.value))}
-            placeholder="Ex.: (11) 999999999"
+            value={email}
+            onInput={(e) => setEmail(e.detail.value)}
+            placeholder="Ex.: nome@gmail.com"
           />
         </View>
 
         {errorText ? <Text className={styles.errorText}>{errorText}</Text> : null}
 
         <Button className={styles.primaryBtn} loading={loading} onClick={handleSend}>
-          <Text className={styles.primaryBtnText}>Enviar código</Text>
+          <Text className={styles.primaryBtnText}>Enviar e-mail</Text>
         </Button>
       </View>
     </View>

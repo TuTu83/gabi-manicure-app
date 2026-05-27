@@ -1,5 +1,5 @@
 import { initializeApp, getApps, type FirebaseApp } from 'firebase/app';
-import { getAuth, type Auth } from 'firebase/auth';
+import { browserLocalPersistence, getAuth, setPersistence, type Auth } from 'firebase/auth';
 import { getFirestore, type Firestore } from 'firebase/firestore';
 import { getStorage, type FirebaseStorage } from 'firebase/storage';
 
@@ -98,6 +98,7 @@ let auth: Auth | null = null;
 let db: Firestore | null = null;
 let storage: FirebaseStorage | null = null;
 let loggedInit = false;
+let persistenceSet = false;
 
 export function getFirebaseApp(): FirebaseApp | null {
   if (!isFirebaseConfigured()) return null;
@@ -125,6 +126,13 @@ export function getFirebaseAuth(): Auth | null {
   try {
     if (auth) return auth;
     auth = getAuth(firebaseApp);
+    const isBrowser = typeof window !== 'undefined' && typeof document !== 'undefined';
+    if (!persistenceSet && isBrowser) {
+      persistenceSet = true;
+      setPersistence(auth, browserLocalPersistence).catch((error) => {
+        console.error('[Firebase] falha ao configurar persistência', error);
+      });
+    }
     return auth;
   } catch (error) {
     console.error('[Firebase] falha ao inicializar Auth', error);

@@ -5,15 +5,12 @@ import { getFirebaseAuth, getFirebaseDb, isFirebaseConfigured } from '@/services
 import { collection, doc, getDoc, getDocs, limit, query, setDoc, where } from 'firebase/firestore';
 import {
   GoogleAuthProvider,
-  PhoneAuthProvider,
-  RecaptchaVerifier,
   createUserWithEmailAndPassword,
   deleteUser,
-  linkWithCredential,
   signInWithEmailAndPassword,
-  signInWithCredential,
   signInWithPopup,
   signOut as firebaseSignOut,
+  sendPasswordResetEmail,
   updatePassword,
 } from 'firebase/auth';
 
@@ -234,6 +231,48 @@ export async function registerWithPhonePassword(input: {
   return profile;
 }
 
+export async function registerWithEmailPassword(input: {
+  name: string;
+  email: string;
+  phoneRaw?: string;
+  password: string;
+}): Promise<UserProfile> {
+  const name = (input.name || '').trim().replace(/\s+/g, ' ');
+  const email = (input.email || '').trim().toLowerCase();
+  const phoneE164 = input.phoneRaw ? normalizePhoneBRToE164(input.phoneRaw) : '';
+  if (!name) throw new Error('Informe seu nome');
+  if (!email || !email.includes('@')) throw new Error('E-mail inválido');
+  if (input.phoneRaw && !phoneE164) throw new Error('Telefone inválido');
+
+  if (!isFirebaseConfigured()) throw new Error('Firebase não configurado');
+  const auth = getFirebaseAuth();
+  const db = getFirebaseDb();
+  if (!auth || !db) throw new Error('Firebase indisponível');
+
+  const result = await createUserWithEmailAndPassword(auth, email, input.password);
+  const now = Date.now();
+  const profile: UserProfile = {
+    id: result.user.uid,
+    fullName: name,
+    phoneE164: phoneE164 || '',
+    email,
+    provider: 'password',
+    createdAt: now,
+  };
+
+  await setDoc(
+    doc(db, 'users', profile.id),
+    {
+      ...profile,
+      name,
+      phone: phoneE164 || '',
+      createdAt: now,
+    } as any,
+    { merge: true },
+  );
+  return profile;
+}
+
 export async function loginWithIdentifier(identifier: string, password: string): Promise<UserProfile> {
   const trimmed = (identifier || '').trim().toLowerCase();
   if (!trimmed) throw new Error('Informe telefone ou Gmail');
@@ -244,13 +283,8 @@ export async function loginWithIdentifier(identifier: string, password: string):
     const db = getFirebaseDb();
     if (!auth || !db) throw new Error('Firebase indisponível');
 
-    const email = (() => {
-      if (trimmed.includes('@')) return trimmed;
-      const phoneE164 = normalizePhoneBRToE164(trimmed);
-      if (!phoneE164) return null;
-      return phoneToAliasEmail(phoneE164);
-    })();
-    if (!email) throw new Error('Telefone inválido');
+    if (!trimmed.includes('@')) throw new Error('Informe seu e-mail');
+    const email = trimmed;
 
     try {
       const result = await signInWithEmailAndPassword(auth, email, password);
@@ -288,9 +322,46 @@ export async function loginWithIdentifier(identifier: string, password: string):
   return user.profile;
 }
 
+export async function restoreSignedInProfile(): Promise<UserProfile | null> {
+  if (!isFirebaseConfigured()) return null;
+  const auth = getFirebaseAuth();
+  const db = getFirebaseDb();
+  if (!auth || !db) return null;
+  if (!auth.currentUser) return null;
+
+  try {
+    const snap = await getDoc(doc(db, 'users', auth.currentUser.uid));
+    if (snap.exists()) return snap.data() as UserProfile;
+    const now = Date.now();
+    const profile: UserProfile = {
+      id: auth.currentUser.uid,
+      fullName: auth.currentUser.displayName || 'Cliente',
+      phoneE164: auth.currentUser.phoneNumber || '',
+      email: auth.currentUser.email || undefined,
+      provider: 'password',
+      createdAt: now,
+    };
+    await setDoc(
+      doc(db, 'users', profile.id),
+      {
+        ...profile,
+        name: profile.fullName,
+        phone: profile.phoneE164 || '',
+        createdAt: now,
+      } as any,
+      { merge: true },
+    );
+    return profile;
+  } catch (error) {
+    console.error('[Auth] falha ao restaurar sessão', error);
+    return null;
+  }
+}
+
 export async function signInWithGoogleH5(): Promise<UserProfile> {
   if (!isFirebaseConfigured()) throw new Error('Firebase não configurado');
-  if (process.env.TARO_ENV !== 'h5') throw new Error('Google Login disponível apenas no H5');
+  const isBrowser = typeof window !== 'undefined' && typeof document !== 'undefined';
+  if (!isBrowser) throw new Error('Google Login disponível apenas no H5');
 
   const auth = getFirebaseAuth();
   const db = getFirebaseDb();
@@ -365,6 +436,20 @@ export async function resetPasswordByPhone(phoneRaw: string, newPassword: string
   writeLocalUsers(users);
 }
 
+export async function sendPasswordResetEmailLink(emailRaw: string): Promise<void> {
+  const email = (emailRaw || '').trim().toLowerCase();
+  if (!email || !email.includes('@')) throw new Error('E-mail inválido');
+  if (!isFirebaseConfigured()) throw new Error('Firebase não configurado');
+  const auth = getFirebaseAuth();
+  if (!auth) throw new Error('Firebase indisponível');
+  try {
+    await sendPasswordResetEmail(auth, email);
+  } catch (error: any) {
+    console.error('[Auth] falha ao enviar e-mail de recuperação', error);
+    throw new Error(error?.message || 'Não foi possível enviar o e-mail de recuperação');
+  }
+}
+
 export async function signOut(): Promise<void> {
   if (isFirebaseConfigured()) {
     const auth = getFirebaseAuth();
@@ -375,82 +460,6 @@ export async function signOut(): Promise<void> {
         console.error('[Auth] falha ao sair no Firebase', error);
       }
     }
-  }
-}
-
-let recaptchaVerifier: RecaptchaVerifier | null = null;
-
-function getOrCreateRecaptchaVerifier(containerId: string): RecaptchaVerifier {
-  const auth = getFirebaseAuth();
-  if (!auth) throw new Error('Firebase indisponível');
-  if (process.env.TARO_ENV !== 'h5') throw new Error('Envio de SMS disponível apenas no H5');
-  if (!containerId) throw new Error('Recaptcha container inválido');
-
-  try {
-    recaptchaVerifier?.clear();
-  } catch {}
-  recaptchaVerifier = new RecaptchaVerifier(auth, containerId, { size: 'invisible' });
-  return recaptchaVerifier;
-}
-
-function mapPhoneAuthError(error: any): string {
-  const code = String(error?.code || '');
-  if (code === 'auth/invalid-phone-number') return 'Telefone inválido';
-  if (code === 'auth/unauthorized-domain') return 'Domínio não autorizado no Firebase (adicione o domínio da Vercel em Authorized domains).';
-  if (code === 'auth/too-many-requests') return 'Muitas tentativas. Tente novamente mais tarde.';
-  if (code === 'auth/quota-exceeded') return 'Limite de SMS excedido no Firebase. Tente novamente mais tarde.';
-  if (code === 'auth/captcha-check-failed') return 'Falha no reCAPTCHA. Atualize a página e tente novamente.';
-  if (code === 'auth/operation-not-allowed') return 'Login por telefone não está ativo no Firebase.';
-  if (code === 'auth/invalid-verification-code') return 'Código inválido';
-  if (code === 'auth/missing-verification-code') return 'Digite o código de 6 dígitos';
-  return error?.message || 'Falha ao enviar/validar o código';
-}
-
-export async function sendPhoneVerificationCode(params: { phoneE164: string; recaptchaContainerId: string }): Promise<string> {
-  if (!isFirebaseConfigured()) throw new Error('Firebase não configurado');
-  const auth = getFirebaseAuth();
-  if (!auth) throw new Error('Firebase indisponível');
-  const phone = (params.phoneE164 || '').trim();
-  if (!phone.startsWith('+')) throw new Error('Telefone inválido');
-
-  try {
-    const verifier = getOrCreateRecaptchaVerifier(params.recaptchaContainerId);
-    await verifier.render();
-    const provider = new PhoneAuthProvider(auth);
-    const verificationId = await provider.verifyPhoneNumber(phone, verifier);
-    return verificationId;
-  } catch (error: any) {
-    console.error('[Auth] falha ao enviar SMS', error);
-    throw new Error(mapPhoneAuthError(error));
-  }
-}
-
-export async function signInWithPhoneCode(params: { verificationId: string; code: string }): Promise<void> {
-  if (!isFirebaseConfigured()) throw new Error('Firebase não configurado');
-  const auth = getFirebaseAuth();
-  if (!auth) throw new Error('Firebase indisponível');
-
-  try {
-    const credential = PhoneAuthProvider.credential(params.verificationId, params.code);
-    await signInWithCredential(auth, credential);
-  } catch (error: any) {
-    console.error('[Auth] falha ao validar código (login)', error);
-    throw new Error(mapPhoneAuthError(error));
-  }
-}
-
-export async function linkCurrentUserWithPhoneCode(params: { verificationId: string; code: string }): Promise<void> {
-  if (!isFirebaseConfigured()) throw new Error('Firebase não configurado');
-  const auth = getFirebaseAuth();
-  if (!auth) throw new Error('Firebase indisponível');
-  if (!auth.currentUser) throw new Error('Sessão expirada');
-
-  try {
-    const credential = PhoneAuthProvider.credential(params.verificationId, params.code);
-    await linkWithCredential(auth.currentUser, credential);
-  } catch (error: any) {
-    console.error('[Auth] falha ao vincular telefone', error);
-    throw new Error(mapPhoneAuthError(error));
   }
 }
 

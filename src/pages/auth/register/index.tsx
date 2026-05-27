@@ -2,19 +2,18 @@ import React, { useMemo, useState } from 'react';
 import { Button, Input, Text, View } from '@tarojs/components';
 import Taro from '@tarojs/taro';
 import { useAppStore } from '@/store/appStore';
-import { sendPhoneVerificationCode } from '@/services/authService';
+import { registerWithEmailPassword } from '@/services/authService';
 import {
   formatPhoneBRDisplay,
-  normalizePhoneBRToE164,
   validateFullName,
   validatePasswordConfirm,
   validatePasswordSecurity,
-  validatePhoneBR,
 } from '@/utils/validators';
 import styles from './index.module.scss';
 
 function RegisterPage() {
   const setRegisterDraft = useAppStore((s) => s.setRegisterDraft);
+  const setCurrentUser = useAppStore((s) => s.setCurrentUser);
 
   const [fullName, setFullName] = useState('');
   const [socialName, setSocialName] = useState('');
@@ -29,7 +28,7 @@ function RegisterPage() {
 
   const validateEmailOptional = (value: string): string | null => {
     const trimmed = (value || '').trim().toLowerCase();
-    if (!trimmed) return null;
+    if (!trimmed) return 'Informe seu e-mail';
     const ok = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(trimmed);
     if (!ok) return 'E-mail inválido';
     return null;
@@ -47,30 +46,23 @@ function RegisterPage() {
     if (fullNameErr) return setErrorText(fullNameErr);
     const emailErr = validateEmailOptional(email);
     if (emailErr) return setErrorText(emailErr);
-    const phoneErr = validatePhoneBR(phone);
-    if (phoneErr) return setErrorText(phoneErr);
     const passErr = validatePasswordSecurity(password);
     if (passErr) return setErrorText(passErr);
     const confirmErr = validatePasswordConfirm(password, confirmPassword);
     if (confirmErr) return setErrorText(confirmErr);
 
-    const phoneE164 = normalizePhoneBRToE164(phone);
-    if (!phoneE164) return setErrorText('Telefone inválido');
-
     setLoading(true);
     try {
-      const draft = {
-        fullName: fullName.trim(),
-        socialName: socialName.trim() || undefined,
-        email: email.trim().toLowerCase() || undefined,
-        phoneRaw: phone,
-        phoneE164,
+      const profile = await registerWithEmailPassword({
+        name: (socialName || '').trim() || fullName.trim(),
+        email: email.trim().toLowerCase(),
+        phoneRaw: phone || undefined,
         password,
-      };
-
-      const verificationId = await sendPhoneVerificationCode({ phoneE164, recaptchaContainerId: 'recaptcha-register' });
-      setRegisterDraft({ ...draft, verificationId });
-      Taro.navigateTo({ url: '/pages/auth/verify/index?mode=register' });
+      });
+      setRegisterDraft(null);
+      setCurrentUser(profile);
+      Taro.showToast({ title: 'Conta criada com sucesso', icon: 'success' });
+      Taro.switchTab({ url: '/pages/index/index' });
     } catch (error: any) {
       setErrorText(error?.message || 'Não foi possível continuar');
     } finally {
@@ -86,7 +78,6 @@ function RegisterPage() {
       </View>
 
       <View className={styles.card}>
-        <View id="recaptcha-register" />
         <Text className={styles.fieldLabel}>Nome completo</Text>
         <View className={styles.inputRow}>
           <Input className={styles.input} value={fullName} onInput={(e) => setFullName(e.detail.value)} placeholder="Ex.: Gabriela Silva" />
@@ -97,12 +88,12 @@ function RegisterPage() {
           <Input className={styles.input} value={socialName} onInput={(e) => setSocialName(e.detail.value)} placeholder="Como prefere ser chamada" />
         </View>
 
-        <Text className={styles.fieldLabel}>E-mail (opcional)</Text>
+        <Text className={styles.fieldLabel}>E-mail</Text>
         <View className={styles.inputRow}>
           <Input className={styles.input} value={email} onInput={(e) => setEmail(e.detail.value)} placeholder="Ex.: nome@gmail.com" />
         </View>
 
-        <Text className={styles.fieldLabel}>Telefone com DDD</Text>
+        <Text className={styles.fieldLabel}>Telefone com DDD (opcional)</Text>
         <View className={styles.inputRow}>
           <Input
             className={styles.input}

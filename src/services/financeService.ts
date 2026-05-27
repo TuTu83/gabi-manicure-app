@@ -148,7 +148,7 @@ export function subscribePaymentsRange(params: {
   }
 
   if (!isFirebaseConfigured()) {
-    const all = safeGetLocal().filter((p) => p.paidAt >= startAt && p.paidAt <= endAt);
+    const all = safeGetLocal().filter((p) => p.paidAt >= startAt && p.paidAt <= endAt).filter((p) => !p.status || p.status === 'paid');
     const filtered = method && method !== 'todas' ? all.filter((p) => p.method === method) : all;
     onChange(filtered.sort((a, b) => b.paidAt - a.paidAt));
     return () => {};
@@ -160,7 +160,7 @@ export function subscribePaymentsRange(params: {
     return () => {};
   }
 
-  const clauses: any[] = [where('paidAt', '>=', startAt), where('paidAt', '<=', endAt)];
+  const clauses: any[] = [where('status', '==', 'paid'), where('paidAt', '>=', startAt), where('paidAt', '<=', endAt)];
   if (method && method !== 'todas') clauses.push(where('method', '==', method));
 
   const q = query(collection(db, 'payments'), ...clauses, orderBy('paidAt', 'desc'), limit(maxItems || 1200));
@@ -185,7 +185,7 @@ export async function fetchPaymentsRange(params: {
 }): Promise<PaymentRecord[]> {
   const { startAt, endAt, method } = params;
   if (!isFirebaseConfigured()) {
-    const all = safeGetLocal().filter((p) => p.paidAt >= startAt && p.paidAt <= endAt);
+    const all = safeGetLocal().filter((p) => p.paidAt >= startAt && p.paidAt <= endAt).filter((p) => !p.status || p.status === 'paid');
     const filtered = method && method !== 'todas' ? all.filter((p) => p.method === method) : all;
     return filtered.sort((a, b) => b.paidAt - a.paidAt);
   }
@@ -193,7 +193,7 @@ export async function fetchPaymentsRange(params: {
   const db = getFirebaseDb();
   if (!db) return [];
 
-  const clauses: any[] = [where('paidAt', '>=', startAt), where('paidAt', '<=', endAt)];
+  const clauses: any[] = [where('status', '==', 'paid'), where('paidAt', '>=', startAt), where('paidAt', '<=', endAt)];
   if (method && method !== 'todas') clauses.push(where('method', '==', method));
   const q = query(collection(db, 'payments'), ...clauses, orderBy('paidAt', 'desc'), limit(5000));
   const snap = await getDocs(q);
@@ -212,7 +212,7 @@ export async function fetchPaymentsRangePage(params: {
   const size = Math.max(50, Math.min(500, Number(pageSize) || 200));
 
   if (!isFirebaseConfigured()) {
-    const all = safeGetLocal().filter((p) => p.paidAt >= startAt && p.paidAt <= endAt);
+    const all = safeGetLocal().filter((p) => p.paidAt >= startAt && p.paidAt <= endAt).filter((p) => !p.status || p.status === 'paid');
     const filtered = method && method !== 'todas' ? all.filter((p) => p.method === method) : all;
     const sorted = filtered.sort((a, b) => b.paidAt - a.paidAt);
     const sliced = afterPaidAt ? sorted.filter((p) => p.paidAt < afterPaidAt).slice(0, size) : sorted.slice(0, size);
@@ -223,7 +223,7 @@ export async function fetchPaymentsRangePage(params: {
   const db = getFirebaseDb();
   if (!db) return { items: [], nextAfterPaidAt: null, nextAfterCursor: null };
 
-  const clauses: any[] = [where('paidAt', '>=', startAt), where('paidAt', '<=', endAt)];
+  const clauses: any[] = [where('status', '==', 'paid'), where('paidAt', '>=', startAt), where('paidAt', '<=', endAt)];
   if (method && method !== 'todas') clauses.push(where('method', '==', method));
 
   const qBase = query(collection(db, 'payments'), ...clauses, orderBy('paidAt', 'desc'));

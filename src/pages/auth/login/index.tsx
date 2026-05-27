@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { Button, Image, Input, Text, View } from '@tarojs/components';
 import Taro from '@tarojs/taro';
 import { loginWithIdentifier, signInWithGoogleH5, updateUserPhone } from '@/services/authService';
@@ -10,6 +10,7 @@ import styles from './index.module.scss';
 function LoginPage() {
   const setCurrentUser = useAppStore((s) => s.setCurrentUser);
   const appName = useAppStore((s) => s.appName);
+  const currentUser = useAppStore((s) => s.currentUser);
 
   const [identifier, setIdentifier] = useState('');
   const [password, setPassword] = useState('');
@@ -25,6 +26,10 @@ function LoginPage() {
   const needsPhone = useMemo(() => Boolean(googleUser && !googleUser.phoneE164), [googleUser]);
   const heroImageUrl =
     'https://images.unsplash.com/photo-1616394584738-fc6e612e71b5?auto=format&fit=crop&w=1200&q=70';
+
+  useEffect(() => {
+    if (currentUser) Taro.switchTab({ url: '/pages/index/index' });
+  }, [currentUser]);
 
   const handleLogin = async () => {
     setErrorText(null);
@@ -109,17 +114,17 @@ function LoginPage() {
           <Text className={styles.titleLead}>Bem-vinda ao</Text>
           <Text className={styles.titleBrand}>{appName}</Text>
         </View>
-        <Text className={styles.subtitle}>Entre com seu telefone (DDD) ou Gmail para continuar.</Text>
+        <Text className={styles.subtitle}>Entre com seu e-mail e senha para continuar.</Text>
       </View>
 
       <View className={styles.card}>
-        <Text className={styles.fieldLabel}>Telefone ou Gmail</Text>
+        <Text className={styles.fieldLabel}>E-mail</Text>
         <View className={styles.inputRow}>
           <Input
             className={styles.input}
             value={identifier}
             onInput={(e) => setIdentifier(e.detail.value)}
-            placeholder="Ex.: 11999998888 ou nome@gmail.com"
+            placeholder="Ex.: nome@gmail.com"
             placeholderClass={styles.placeholder}
           />
         </View>
