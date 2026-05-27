@@ -23,19 +23,20 @@ const defaultAdminEmails = ['suporte.gabimanicure@gmail.com'];
 const localUsersKey = 'gm.users';
 
 export async function getAdminEmails(): Promise<string[]> {
-  if (!isFirebaseConfigured()) return defaultAdminEmails;
+  const base = defaultAdminEmails.map((e) => (e || '').trim().toLowerCase()).filter(Boolean);
+  if (!isFirebaseConfigured()) return base;
   const db = getFirebaseDb();
-  if (!db) return [];
+  if (!db) return base;
 
   try {
     const snap = await getDoc(doc(db, 'admin', 'config'));
-    if (!snap.exists()) return [];
+    if (!snap.exists()) return base;
     const emails = (snap.data() as any).emails as string[] | undefined;
     const normalized = (emails || []).map((e) => (e || '').trim().toLowerCase()).filter(Boolean);
-    return normalized;
+    return Array.from(new Set([...base, ...normalized]));
   } catch (error) {
     console.error('[Admin] falha ao ler configuração de admin', error);
-    return [];
+    return base;
   }
 }
 

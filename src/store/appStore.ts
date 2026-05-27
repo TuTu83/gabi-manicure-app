@@ -33,7 +33,7 @@ function loadPersisted(): PersistedAppState {
   const data = safeGetStorage<PersistedAppState>(storageKeys.app);
   return {
     theme: data?.theme ?? 'light',
-    appName: data?.appName ?? 'Gabi Manicure',
+    appName: data?.appName ?? 'Agendar Manicure Gabriele',
     currentUser: data?.currentUser ?? null,
   };
 }

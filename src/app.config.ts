@@ -12,7 +12,7 @@ export default defineAppConfig({
   window: {
     backgroundTextStyle: 'light',
     navigationBarBackgroundColor: '#fff',
-    navigationBarTitleText: 'Gabi Manicure',
+    navigationBarTitleText: 'Agendar Manicure Gabriele',
     navigationBarTextStyle: 'black'
   },
   tabBar: {
