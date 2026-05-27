@@ -48,7 +48,6 @@ function AdminPage() {
     dashboard: false,
     appointments: false,
     finance: false,
-    services: false,
     promotions: false,
     clients: false,
     settings: false,
@@ -1241,11 +1240,54 @@ function AdminPage() {
 
           <AdminAccordion
             title="Controle de agendamentos"
-            subtitle="Aprovar, reagendar, cancelar e organizar por filtros."
+            subtitle="Aprovar, reagendar, cancelar e gerenciar serviços disponíveis para o cliente."
             open={open.appointments}
             badgeText={String(filteredDayAppointments.length)}
             onToggle={() => setOpen((p) => ({ ...p, appointments: !p.appointments }))}
           >
+            <Text className={styles.fieldLabel}>Serviços (o que aparece para o cliente ao agendar)</Text>
+            <View className={styles.row}>
+              <Button className={styles.btnPrimary} onClick={startCreateService}>
+                <Text className={styles.btnPrimaryText}>Adicionar serviço</Text>
+              </Button>
+              <View className={styles.pill}>
+                <Text className={styles.pillText}>Ordenação por prioridade</Text>
+              </View>
+            </View>
+
+            {services.length ? (
+              services
+                .slice()
+                .sort((a, b) => (a.sortOrder ?? 9999) - (b.sortOrder ?? 9999))
+                .map((s) => (
+                  <View key={s.id} className={styles.listItem} onClick={() => startEditService(s)}>
+                    <Text className={styles.listTitle}>{s.name}</Text>
+                    <Text className={styles.listSub}>
+                      {priceFromCents(s.priceCents)} • {(professionals.find((p) => p.id === s.defaultProfessionalId)?.name || 'Profissional: -')}
+                    </Text>
+                    {s.createdAt ? <Text className={styles.listSub}>Criado em {formatDateLabel(s.createdAt)}</Text> : null}
+                    <View className={styles.badgeRow}>
+                      <View className={styles.badge}>
+                        <Text className={styles.badgeText}>ordem {s.sortOrder ?? '-'}</Text>
+                      </View>
+                      {s.active === false ? (
+                        <View className={styles.badge}>
+                          <Text className={classnames(styles.badgeText, styles.dangerText)}>desativado</Text>
+                        </View>
+                      ) : (
+                        <View className={classnames(styles.badge, styles.badgePrimary)}>
+                          <Text className={classnames(styles.badgeText, styles.badgePrimaryText)}>ativo</Text>
+                        </View>
+                      )}
+                    </View>
+                  </View>
+                ))
+            ) : (
+              <View className={styles.listItem}>
+                <Text className={styles.listSub}>Sem serviços no Firebase. Você pode criar o primeiro agora.</Text>
+              </View>
+            )}
+
             <Text className={styles.fieldLabel}>Buscar por cliente, telefone ou serviço</Text>
             <View className={styles.inputRow}>
               <Input className={styles.input} value={searchText} onInput={(e) => setSearchText(e.detail.value)} placeholder="Ex.: Gabriela" />
@@ -1503,56 +1545,6 @@ function AdminPage() {
                 <Text className={styles.modalBtnTextWhite}>Baixar Excel</Text>
               </Button>
             </View>
-          </AdminAccordion>
-
-          <AdminAccordion
-            title="Serviços"
-            subtitle="Crie, edite e ative/desative serviços."
-            open={open.services}
-            badgeText={String(services.length)}
-            onToggle={() => setOpen((p) => ({ ...p, services: !p.services }))}
-          >
-            <View className={styles.row}>
-              <Button className={styles.btnPrimary} onClick={startCreateService}>
-                <Text className={styles.btnPrimaryText}>Novo serviço</Text>
-              </Button>
-              <View className={styles.pill}>
-                <Text className={styles.pillText}>Ordenação por prioridade</Text>
-              </View>
-            </View>
-
-            {services.length ? (
-              services
-                .slice()
-                .sort((a, b) => (a.sortOrder ?? 9999) - (b.sortOrder ?? 9999))
-                .map((s) => (
-                  <View key={s.id} className={styles.listItem} onClick={() => startEditService(s)}>
-                    <Text className={styles.listTitle}>{s.name}</Text>
-                    <Text className={styles.listSub}>
-                      {priceFromCents(s.priceCents)} • {(professionals.find((p) => p.id === s.defaultProfessionalId)?.name || 'Profissional: -')}
-                    </Text>
-                    {s.createdAt ? <Text className={styles.listSub}>Criado em {formatDateLabel(s.createdAt)}</Text> : null}
-                    <View className={styles.badgeRow}>
-                      <View className={styles.badge}>
-                        <Text className={styles.badgeText}>ordem {s.sortOrder ?? '-'}</Text>
-                      </View>
-                      {s.active === false ? (
-                        <View className={styles.badge}>
-                          <Text className={classnames(styles.badgeText, styles.dangerText)}>desativado</Text>
-                        </View>
-                      ) : (
-                        <View className={classnames(styles.badge, styles.badgePrimary)}>
-                          <Text className={classnames(styles.badgeText, styles.badgePrimaryText)}>ativo</Text>
-                        </View>
-                      )}
-                    </View>
-                  </View>
-                ))
-            ) : (
-              <View className={styles.listItem}>
-                <Text className={styles.listSub}>Sem serviços no Firebase. Você pode criar o primeiro agora.</Text>
-              </View>
-            )}
           </AdminAccordion>
 
           <AdminAccordion
