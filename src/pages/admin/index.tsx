@@ -1,4 +1,5 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+declare const process: any;
 import { Button, Image, Input, Picker, ScrollView, Switch, Text, View } from '@tarojs/components';
 import Taro from '@tarojs/taro';
 import classnames from 'classnames';
@@ -7,7 +8,7 @@ import AdminAccordion from '@/components/AdminAccordion';
 import LoadingOverlay from '@/components/LoadingOverlay';
 import MiniBarChart, { type BarChartItem } from '@/components/MiniBarChart';
 import { useAdminGuard } from '@/hooks/useAdminGuard';
-import { subscribeAppointmentsRange, subscribeAllAppointments, subscribeAllPromotions, subscribeAllServices, subscribeAllUsers, setUserAdminFields, upsertPromotion, upsertService } from '@/services/adminService';
+import { subscribeAppointmentsRange, subscribeAllAppointments, subscribeAllPromotions, subscribeAllServices, subscribeAllUsers, setUserAdminFields, upsertPromotion, upsertService, deleteService } from '@/services/adminService';
 import { fetchProfessionals } from '@/services/catalogService';
 import { createAdminLog } from '@/services/adminLogService';
 import {
@@ -61,7 +62,7 @@ function AdminPage() {
   const [services, setServices] = useState<ServiceItem[]>([]);
   const [promotions, setPromotions] = useState<Promotion[]>([]);
   const financePageSize = 200;
-  const [paymentsLive, setPaymentsLive] = useState<PaymentRecord[]>([]);
+  const [, setPaymentsLive] = useState<PaymentRecord[]>([]);
   const [financeHistory, setFinanceHistory] = useState<PaymentRecord[]>([]);
   const [financeAfterPaidAt, setFinanceAfterPaidAt] = useState<number | null>(null);
   const [financeHasMore, setFinanceHasMore] = useState(false);
@@ -89,14 +90,16 @@ function AdminPage() {
   }>({ items: [], currentMonthCents: 0, previousMonthCents: 0 });
   const financeOverviewLastRunRef = useRef(0);
   const financeAfterCursorRef = useRef<any>(null);
-  const [financeInitialLoading, setFinanceInitialLoading] = useState(false);
+  const [, setFinanceInitialLoading] = useState(false);
 
   const [busy, setBusy] = useState(false);
   const [errorText, setErrorText] = useState<string | null>(null);
 
-  const [filterDateMs, setFilterDateMs] = useState<number>(() => Date.now());
-  const [filterStatus, setFilterStatus] = useState<AppointmentStatus | 'todos'>('todos');
-  const [searchText, setSearchText] = useState('');
+  const [filterDateMs] = useState<number>(() => Date.now());
+  const [filterStatus] = useState<AppointmentStatus | 'todos'>('todos');
+  
+  const [serviceSearch, setServiceSearch] = useState('');
+  const [clientSearch, setClientSearch] = useState('');
   const [financeStart, setFinanceStart] = useState<string>(() => toISODate(Date.now()));
   const [financeEnd, setFinanceEnd] = useState<string>(() => toISODate(Date.now()));
   const [financeMethod, setFinanceMethod] = useState<PaymentMethod | 'todas'>('todas');
@@ -372,18 +375,32 @@ function AdminPage() {
     };
   }, [allowed, financeMethod, open.finance]);
 
-  const filteredDayAppointments = useMemo(() => {
-    const q = (searchText || '').trim().toLowerCase();
-    if (!q) return dayAppointments;
-    return dayAppointments.filter((a) => {
+  
+
+  const filteredServices = useMemo(() => {
+    const q = (serviceSearch || '').trim().toLowerCase();
+    if (!q) return services;
+    return services.filter((s) => {
       return (
-        a.userName.toLowerCase().includes(q) ||
-        (a.phoneE164 || '').toLowerCase().includes(q) ||
-        (a.serviceName || '').toLowerCase().includes(q) ||
-        (a.professionalName || '').toLowerCase().includes(q)
+        (s.name || '').toLowerCase().includes(q) ||
+        (s.description || '').toLowerCase().includes(q) ||
+        String(priceFromCents(s.priceCents || 0)).toLowerCase().includes(q)
       );
     });
-  }, [dayAppointments, searchText]);
+  }, [services, serviceSearch]);
+
+  const filteredClients = useMemo(() => {
+    const q = (clientSearch || '').trim().toLowerCase();
+    if (!q) return users;
+    return users.filter((u) => {
+      return (
+        (u.fullName || '').toLowerCase().includes(q) ||
+        (u.socialName || '').toLowerCase().includes(q) ||
+        (u.phoneE164 || '').toLowerCase().includes(q) ||
+        (u.email || '').toLowerCase().includes(q)
+      );
+    });
+  }, [users, clientSearch]);
 
   const stats = useMemo(() => {
     const now = Date.now();
@@ -501,7 +518,7 @@ function AdminPage() {
       });
       createAdminLog({
         actor: currentUser,
-        action: 'reject_appointment',
+        action: 'cancel_appointment',
         entityType: 'appointment',
         entityId: appointmentSelected.id,
         summary: `Agendamento recusado: ${appointmentSelected.userName}`,
@@ -688,6 +705,48 @@ function AdminPage() {
     setServiceImagePreviewBroken(false);
     setServiceSort(String(s.sortOrder ?? 1));
     setServiceEditorOpen(true);
+  };
+
+  const handleToggleServiceActive = async (service: ServiceItem) => {
+    await runSafe(async () => {
+      await upsertService(service.id, {
+        name: service.name,
+        description: service.description,
+        durationMinutes: service.durationMinutes || 60,
+        priceCents: service.priceCents || 0,
+        active: service.active === false ? true : false,
+        imageUrl: service.imageUrl,
+        sortOrder: service.sortOrder || 1,
+        defaultProfessionalId: service.defaultProfessionalId,
+      });
+      if (currentUser) {
+        createAdminLog({
+          actor: currentUser,
+          action: 'upsert_service',
+          entityType: 'service',
+          entityId: service.id,
+          summary: `${service.active === false ? 'Ativou' : 'Desativou'} serviço: ${service.name}`,
+          meta: { active: service.active === false ? true : false },
+        });
+      }
+      Taro.showToast({ title: service.active === false ? 'Serviço ativado' : 'Serviço desativado', icon: 'success' });
+    });
+  };
+  const handleDeleteService = async (service: ServiceItem) => {
+    await runSafe(async () => {
+      await deleteService(service.id);
+      if (currentUser) {
+        createAdminLog({
+          actor: currentUser,
+          action: 'upsert_service',
+          entityType: 'service',
+          entityId: service.id,
+          summary: `Serviço desativado: ${service.name}`,
+          meta: { active: false },
+        });
+      }
+      Taro.showToast({ title: 'Serviço removido', icon: 'success' });
+    });
   };
 
   const handlePickServiceImage = async () => {
@@ -919,24 +978,7 @@ function AdminPage() {
     });
   };
 
-  const clientsBySpend = useMemo(() => {
-    const sumByUser: Record<string, number> = {};
-    monthAppointments.forEach((a) => {
-      if (a.status === 'cancelado') return;
-      sumByUser[a.userId] = (sumByUser[a.userId] || 0) + (a.priceCents || 0);
-    });
-    return Object.entries(sumByUser)
-      .sort((a, b) => b[1] - a[1])
-      .slice(0, 5)
-      .map(([userId, cents]) => {
-        const u = users.find((x) => x.id === userId);
-        return { userId, name: u?.socialName || u?.fullName || 'Cliente', cents };
-      });
-  }, [monthAppointments, users]);
-
-  const chartItems: BarChartItem[] = useMemo(() => {
-    return (stats.topServices.length ? stats.topServices : [{ label: 'Sem dados', value: 1 }]) as BarChartItem[];
-  }, [stats.topServices]);
+  
 
   const financeDailyChart = useMemo<BarChartItem[]>(() => {
     const items = financeAgg.daySeries.slice(-14).map((d) => ({ label: dayjs(d.dayMs).format('DD/MM'), value: Math.round(d.cents / 100) }));
@@ -1181,7 +1223,7 @@ function AdminPage() {
             <Text className={styles.btnSecondaryText}>Voltar</Text>
           </Button>
         </View>
-        <Text className={styles.subtitle}>Todos os módulos começam recolhidos. Expanda apenas o que desejar.</Text>
+        <Text className={styles.subtitle}>Painel reorganizado com métricas rápidas, gerenciamento de serviços e controle administrativo direto.</Text>
       </View>
 
       <View className={styles.content}>
@@ -1190,51 +1232,39 @@ function AdminPage() {
             <Text className={classnames(styles.listSub, styles.dangerText)}>{errorText}</Text>
           </View>
         ) : null}
-
         <View className={styles.stack}>
           <AdminAccordion
             title="Dashboard"
-            subtitle="Indicadores em tempo real e visão geral do negócio."
+            subtitle="Visão consolidada de agendamentos, clientes e faturamento."
             open={open.dashboard}
             onToggle={() => setOpen((p) => ({ ...p, dashboard: !p.dashboard }))}
           >
-            <View className={styles.grid2}>
-              <View className={styles.statCard}>
-                <Text className={styles.statLabel}>Total de clientes</Text>
+            <View className={styles.summaryGrid}>
+              <View className={styles.summaryCard}>
+                <Text className={styles.statLabel}>Agendamentos hoje</Text>
+                <Text className={styles.statValue}>{stats.agDia}</Text>
+              </View>
+              <View className={styles.summaryCard}>
+                <Text className={styles.statLabel}>Faturamento diário</Text>
+                <Text className={styles.statValue}>{priceFromCents(financeOverview.daily)}</Text>
+              </View>
+              <View className={styles.summaryCard}>
+                <Text className={styles.statLabel}>Faturamento semanal</Text>
+                <Text className={styles.statValue}>{priceFromCents(financeOverview.weekly)}</Text>
+              </View>
+              <View className={styles.summaryCard}>
+                <Text className={styles.statLabel}>Faturamento mensal</Text>
+                <Text className={styles.statValue}>{priceFromCents(financeOverview.monthly)}</Text>
+              </View>
+              <View className={styles.summaryCard}>
+                <Text className={styles.statLabel}>Clientes cadastrados</Text>
                 <Text className={styles.statValue}>{stats.totalClientes}</Text>
               </View>
-              <View className={styles.statCard}>
+              <View className={styles.summaryCard}>
                 <Text className={styles.statLabel}>Clientes VIP</Text>
                 <Text className={styles.statValue}>{stats.vip}</Text>
               </View>
-              <View className={styles.statCard}>
-                <Text className={styles.statLabel}>Agendamentos do dia</Text>
-                <Text className={styles.statValue}>{stats.agDia}</Text>
-              </View>
-              <View className={styles.statCard}>
-                <Text className={styles.statLabel}>Cancelamentos do dia</Text>
-                <Text className={styles.statValue}>{stats.cancDia}</Text>
-              </View>
-              <View className={styles.statCard}>
-                <Text className={styles.statLabel}>Faturamento diário</Text>
-                <Text className={styles.statValue}>{priceFromCents(stats.faturamentoDia)}</Text>
-              </View>
-              <View className={styles.statCard}>
-                <Text className={styles.statLabel}>Faturamento mensal</Text>
-                <Text className={styles.statValue}>{priceFromCents(stats.faturamentoMes)}</Text>
-              </View>
-              <View className={styles.statCard}>
-                <Text className={styles.statLabel}>Pendentes hoje</Text>
-                <Text className={styles.statValue}>{stats.pendDia}</Text>
-              </View>
-              <View className={styles.statCard}>
-                <Text className={styles.statLabel}>Horários restantes (estimativa)</Text>
-                <Text className={styles.statValue}>{stats.remainingSlots}</Text>
-              </View>
             </View>
-
-            <View className={styles.fieldLabel}>Serviços mais agendados (mês)</View>
-            <MiniBarChart items={chartItems} />
 
             <View className={styles.fieldLabel}>Próximos horários</View>
             {stats.proximos.length ? (
@@ -1242,7 +1272,7 @@ function AdminPage() {
                 <View key={a.id} className={styles.listItem} onClick={() => openAppointment(a)}>
                   <Text className={styles.listTitle}>{a.userName}</Text>
                   <Text className={styles.listSub}>
-                    {a.serviceName} • {formatDateLabel(a.startAt)} às {formatTime(a.startAt)} • {a.professionalName}
+                    {a.serviceName} • {formatDateLabel(a.startAt)} às {formatTime(a.startAt)}
                   </Text>
                   <View className={styles.badgeRow}>
                     <View className={classnames(styles.badge, styles.badgePrimary)}>
@@ -1259,127 +1289,63 @@ function AdminPage() {
                 <Text className={styles.listSub}>Nenhum horário futuro encontrado.</Text>
               </View>
             )}
-
-            <View className={styles.fieldLabel}>Clientes VIP por gasto (mês)</View>
-            {clientsBySpend.length ? (
-              clientsBySpend.map((c) => (
-                <View key={c.userId} className={styles.listItem}>
-                  <Text className={styles.listTitle}>{c.name}</Text>
-                  <Text className={styles.listSub}>Total: {priceFromCents(c.cents)}</Text>
-                </View>
-              ))
-            ) : (
-              <View className={styles.listItem}>
-                <Text className={styles.listSub}>Sem dados suficientes.</Text>
-              </View>
-            )}
           </AdminAccordion>
 
           <AdminAccordion
-            title="Controle de agendamentos"
-            subtitle="Aprovar, reagendar, cancelar e gerenciar serviços disponíveis para o cliente."
+            title="Serviços"
+            subtitle="Gerencie os serviços oferecidos, defina preços, ordem e disponibilidade."
             open={open.appointments}
-            badgeText={String(filteredDayAppointments.length)}
+            badgeText={String(services.length)}
             onToggle={() => setOpen((p) => ({ ...p, appointments: !p.appointments }))}
           >
-            <Text className={styles.fieldLabel}>Serviços (o que aparece para o cliente ao agendar)</Text>
-            <View className={styles.row}>
+            <View className={styles.sectionActions}>
               <Button className={styles.btnPrimary} onClick={startCreateService}>
                 <Text className={styles.btnPrimaryText}>Adicionar serviço</Text>
               </Button>
-              <View className={styles.pill}>
-                <Text className={styles.pillText}>Ordenação por prioridade</Text>
+              <View className={styles.inputRow} style={{ flex: 1, minWidth: '220rpx' }}>
+                <Input className={styles.input} value={serviceSearch} onInput={(e) => setServiceSearch(e.detail.value)} placeholder="Buscar serviço" />
               </View>
             </View>
 
-            {services.length ? (
-              services
+            {filteredServices.length ? (
+              filteredServices
                 .slice()
                 .sort((a, b) => (a.sortOrder ?? 9999) - (b.sortOrder ?? 9999))
                 .map((s) => (
-                  <View key={s.id} className={styles.listItem} onClick={() => startEditService(s)}>
-                    <Text className={styles.listTitle}>{s.name}</Text>
-                    <Text className={styles.listSub}>
-                      {priceFromCents(s.priceCents)}
-                    </Text>
-                    {s.createdAt ? <Text className={styles.listSub}>Criado em {formatDateLabel(s.createdAt)}</Text> : null}
-                    <View className={styles.badgeRow}>
-                      <View className={styles.badge}>
-                        <Text className={styles.badgeText}>ordem {s.sortOrder ?? '-'}</Text>
+                  <View key={s.id} className={styles.serviceCard}>
+                    <View className={styles.serviceCardBody}>
+                      <View className={styles.serviceImage}>
+                        {s.imageUrl ? <Image src={s.imageUrl} mode="aspectFill" style={{ width: '100%', height: '100%' }} /> : null}
                       </View>
-                      {s.active === false ? (
-                        <View className={styles.badge}>
-                          <Text className={classnames(styles.badgeText, styles.dangerText)}>desativado</Text>
+                      <View className={styles.serviceInfo}>
+                        <Text className={styles.serviceName}>{s.name}</Text>
+                        <Text className={styles.serviceDescription}>{s.description || 'Sem descrição cadastrada.'}</Text>
+                        <View className={styles.serviceMeta}>
+                          <Text className={styles.serviceBadge}>{priceFromCents(s.priceCents || 0)}</Text>
+                          <Text className={styles.serviceBadge}>{s.durationMinutes} min</Text>
+                          <Text className={styles.serviceBadge}>Ordem {s.sortOrder ?? '-'}</Text>
+                          <Text className={styles.serviceBadge} style={{ color: s.active === false ? 'var(--color-error)' : 'var(--color-primary)' }}>
+                            {s.active === false ? 'Inativo' : 'Ativo'}
+                          </Text>
                         </View>
-                      ) : (
-                        <View className={classnames(styles.badge, styles.badgePrimary)}>
-                          <Text className={classnames(styles.badgeText, styles.badgePrimaryText)}>ativo</Text>
-                        </View>
-                      )}
+                      </View>
+                    </View>
+                    <View className={styles.serviceActions}>
+                      <Button className={styles.serviceActionBtn} onClick={() => startEditService(s)}>
+                        <Text>Editar</Text>
+                      </Button>
+                      <Button className={styles.serviceActionBtn} onClick={() => handleToggleServiceActive(s)}>
+                        <Text>{s.active === false ? 'Ativar' : 'Desativar'}</Text>
+                      </Button>
+                      <Button className={classnames(styles.serviceActionBtn, styles.serviceActionBtnPrimary)} onClick={() => handleDeleteService(s)}>
+                        <Text>Remover</Text>
+                      </Button>
                     </View>
                   </View>
                 ))
             ) : (
               <View className={styles.listItem}>
-                <Text className={styles.listSub}>Sem serviços no Firebase. Você pode criar o primeiro agora.</Text>
-              </View>
-            )}
-
-            <Text className={styles.fieldLabel}>Buscar por cliente, telefone ou serviço</Text>
-            <View className={styles.inputRow}>
-              <Input className={styles.input} value={searchText} onInput={(e) => setSearchText(e.detail.value)} placeholder="Ex.: Gabriela" />
-            </View>
-
-            <Text className={styles.fieldLabel}>Filtros</Text>
-            <View className={styles.row}>
-              <Picker
-                mode="date"
-                value={toISODate(filterDateMs)}
-                onChange={(e) => {
-                  const next = new Date(`${e.detail.value}T00:00:00`).getTime();
-                  setFilterDateMs(next);
-                }}
-              >
-                <View className={styles.pill}>
-                  <Text className={styles.pillText}>{formatDateLabel(filterDateMs)}</Text>
-                </View>
-              </Picker>
-
-              <Picker
-                mode="selector"
-                range={['todos', 'pendente', 'confirmado', 'cancelado', 'recusado', 'concluido']}
-                onChange={(e) => {
-                  const idx = Number(e.detail.value);
-                  const value = (['todos', 'pendente', 'confirmado', 'cancelado', 'recusado', 'concluido'][idx] || 'todos') as any;
-                  setFilterStatus(value);
-                }}
-              >
-                <View className={styles.pill}>
-                  <Text className={styles.pillText}>{filterStatus}</Text>
-                </View>
-              </Picker>
-            </View>
-
-            {filteredDayAppointments.length ? (
-              filteredDayAppointments.map((a) => (
-                <View key={a.id} className={styles.listItem} onClick={() => openAppointment(a)}>
-                  <Text className={styles.listTitle}>{a.userName}</Text>
-                  <Text className={styles.listSub}>
-                    {a.serviceName} • {formatTime(a.startAt)} • {a.professionalName} • {paymentMethodShortLabel(a.paymentMethod)}
-                  </Text>
-                  <View className={styles.badgeRow}>
-                    <View className={classnames(styles.badge, styles.badgePrimary)}>
-                      <Text className={classnames(styles.badgeText, styles.badgePrimaryText)}>{statusLabel(a.status, a.onMyWayAt)}</Text>
-                    </View>
-                    <View className={styles.badge}>
-                      <Text className={styles.badgeText}>{a.phoneE164}</Text>
-                    </View>
-                  </View>
-                </View>
-              ))
-            ) : (
-              <View className={styles.listItem}>
-                <Text className={styles.listSub}>Nenhum agendamento encontrado para os filtros atuais.</Text>
+                <Text className={styles.listSub}>Sem serviços cadastrados. Adicione o primeiro serviço para iniciar a agenda.</Text>
               </View>
             )}
           </AdminAccordion>
@@ -1649,26 +1615,14 @@ function AdminPage() {
             <View className={styles.inputRow}>
               <Input
                 className={styles.input}
-                value={searchText}
-                onInput={(e) => setSearchText(e.detail.value)}
+                value={clientSearch}
+                onInput={(e) => setClientSearch(e.detail.value)}
                 placeholder="Buscar por nome ou telefone"
               />
             </View>
 
-            {users.length ? (
-              users
-                .filter((u) => {
-                  const q = (searchText || '').trim().toLowerCase();
-                  if (!q) return true;
-                  return (
-                    (u.fullName || '').toLowerCase().includes(q) ||
-                    (u.socialName || '').toLowerCase().includes(q) ||
-                    (u.phoneE164 || '').toLowerCase().includes(q) ||
-                    (u.email || '').toLowerCase().includes(q)
-                  );
-                })
-                .slice(0, 80)
-                .map((u) => (
+            {filteredClients.length ? (
+              filteredClients.slice(0, 80).map((u) => (
                   <View key={u.id} className={styles.listItem} onClick={() => openClientEditor(u)}>
                     <Text className={styles.listTitle}>{u.socialName || u.fullName}</Text>
                     <Text className={styles.listSub}>
