@@ -1,5 +1,5 @@
 import Taro from '@tarojs/taro';
-import { addDoc, collection, doc, onSnapshot, orderBy, query, updateDoc, where } from 'firebase/firestore';
+import { addDoc, collection, doc, onSnapshot, query, updateDoc, where } from 'firebase/firestore';
 import { getFirebaseDb, isFirebaseConfigured } from '@/services/firebase';
 import type { Appointment, InAppNotification, NotificationType } from '@/types/booking';
 import { getLocalSettings } from '@/services/settingsService';
@@ -63,17 +63,15 @@ export function subscribeNotificationsForUser(userId: string, onChange: (items: 
     return () => {};
   }
 
-  const q = query(
-    collection(db, 'notifications'),
-    where('target', '==', 'cliente'),
-    where('targetUserId', '==', userId),
-    orderBy('createdAt', 'desc'),
-  );
+  const q = query(collection(db, 'notifications'), where('targetUserId', '==', userId));
 
   const unsub = onSnapshot(
     q,
     (snap) => {
-      const items = snap.docs.map((d) => ({ id: d.id, ...(d.data() as Omit<InAppNotification, 'id'>) }));
+      const items = snap.docs
+        .map((d) => ({ id: d.id, ...(d.data() as Omit<InAppNotification, 'id'>) }))
+        .filter((n) => n.target === 'cliente' && n.targetUserId === userId)
+        .sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
       onChange(items);
     },
     (error) => {

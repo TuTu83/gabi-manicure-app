@@ -5,6 +5,7 @@ import {
   collection,
   doc,
   getDocs,
+  limit,
   onSnapshot,
   orderBy,
   query,
@@ -130,11 +131,13 @@ export function subscribeUserAppointments(userId: string, onChange: (items: Appo
     return () => {};
   }
 
-  const q = query(collection(db, 'appointments'), where('userId', '==', userId), orderBy('startAt', 'desc'));
+  const q = query(collection(db, 'appointments'), where('userId', '==', userId));
   const unsub = onSnapshot(
     q,
     (snap) => {
-      const items = snap.docs.map((d) => ({ id: d.id, ...(d.data() as Omit<Appointment, 'id'>) }));
+      const items = snap.docs
+        .map((d) => ({ id: d.id, ...(d.data() as Omit<Appointment, 'id'>) }))
+        .sort((a, b) => b.startAt - a.startAt);
       onChange(items);
     },
     (error) => {
@@ -176,18 +179,18 @@ export function subscribeBusyForProfessionalDay(params: {
 
   const q = query(
     collection(db, 'appointments'),
-    where('professionalId', '==', professionalId),
     where('startAt', '>=', start),
     where('startAt', '<=', end),
+    orderBy('startAt', 'asc'),
   );
 
   const unsub = onSnapshot(
     q,
     (snap) => {
-      const items = snap.docs.map((d) => {
-        const data = d.data() as Appointment;
-        return { startAt: data.startAt, endAt: data.endAt, status: data.status };
-      });
+      const items = snap.docs
+        .map((d) => d.data() as Appointment)
+        .filter((a) => a.professionalId === professionalId)
+        .map((a) => ({ startAt: a.startAt, endAt: a.endAt, status: a.status }));
       onChange(items);
     },
     (error) => {
@@ -235,10 +238,11 @@ export async function createAppointment(input: Omit<Appointment, 'id' | 'created
 
   try {
     const threshold = Date.now() - 15_000;
-    const qUser = query(collection(db, 'appointments'), where('userId', '==', input.userId), where('createdAt', '>=', threshold));
+    const qUser = query(collection(db, 'appointments'), where('createdAt', '>=', threshold), orderBy('createdAt', 'desc'), limit(30));
     const snapUser = await getDocs(qUser);
     const tooSoon = snapUser.docs.some((d) => {
       const a = d.data() as Appointment;
+      if (a.userId !== input.userId) return false;
       return (a.createdAt || 0) >= threshold && a.status !== 'cancelado' && a.status !== 'recusado';
     });
     if (tooSoon) throw new Error('Você acabou de solicitar um agendamento. Aguarde alguns segundos e tente novamente.');
@@ -251,15 +255,16 @@ export async function createAppointment(input: Omit<Appointment, 'id' | 'created
     const end = dayjs(startAt).endOf('day').valueOf();
     const q = query(
       collection(db, 'appointments'),
-      where('professionalId', '==', input.professionalId),
       where('startAt', '>=', start),
       where('startAt', '<=', end),
+      orderBy('startAt', 'asc'),
     );
     const snap = await getDocs(q);
 
     const conflicts = snap.docs.some((d) => {
       const data = d.data() as Appointment;
-    if (data.status === 'cancelado' || data.status === 'recusado') return false;
+      if (data.professionalId !== input.professionalId) return false;
+      if (data.status === 'cancelado' || data.status === 'recusado') return false;
       return overlaps(startAt, endAt, data.startAt, data.endAt);
     });
     if (conflicts) throw new Error('Este horário acabou de ser ocupado. Escolha outro horário.');
@@ -446,14 +451,15 @@ export async function rescheduleAppointment(params: {
     const end = dayjs(startAt).endOf('day').valueOf();
     const q = query(
       collection(db, 'appointments'),
-      where('professionalId', '==', professionalId),
       where('startAt', '>=', start),
       where('startAt', '<=', end),
+      orderBy('startAt', 'asc'),
     );
     const snap = await getDocs(q);
     const conflicts = snap.docs.some((d) => {
       if (d.id === appointmentId) return false;
       const data = d.data() as Appointment;
+      if (data.professionalId !== professionalId) return false;
       if (data.status === 'cancelado' || data.status === 'recusado') return false;
       return overlaps(startAt, endAt, data.startAt, data.endAt);
     });

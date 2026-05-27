@@ -160,15 +160,14 @@ export function subscribePaymentsRange(params: {
     return () => {};
   }
 
-  const clauses: any[] = [where('status', '==', 'paid'), where('paidAt', '>=', startAt), where('paidAt', '<=', endAt)];
-  if (method && method !== 'todas') clauses.push(where('method', '==', method));
-
-  const q = query(collection(db, 'payments'), ...clauses, orderBy('paidAt', 'desc'), limit(maxItems || 1200));
+  const q = query(collection(db, 'payments'), where('paidAt', '>=', startAt), where('paidAt', '<=', endAt), orderBy('paidAt', 'desc'), limit(maxItems || 1200));
   const unsub = onSnapshot(
     q,
     (snap) => {
-      const items = snap.docs.map((d) => ({ id: d.id, ...(d.data() as Omit<PaymentRecord, 'id'>) }));
-      onChange(items);
+      const raw = snap.docs.map((d) => ({ id: d.id, ...(d.data() as Omit<PaymentRecord, 'id'>) }));
+      const paid = raw.filter((p) => !p.status || p.status === 'paid');
+      const filtered = method && method !== 'todas' ? paid.filter((p) => p.method === method) : paid;
+      onChange(filtered.sort((a, b) => b.paidAt - a.paidAt));
     },
     (error) => {
       console.error('[Financeiro] falha ao escutar pagamentos', error);
@@ -193,11 +192,12 @@ export async function fetchPaymentsRange(params: {
   const db = getFirebaseDb();
   if (!db) return [];
 
-  const clauses: any[] = [where('status', '==', 'paid'), where('paidAt', '>=', startAt), where('paidAt', '<=', endAt)];
-  if (method && method !== 'todas') clauses.push(where('method', '==', method));
-  const q = query(collection(db, 'payments'), ...clauses, orderBy('paidAt', 'desc'), limit(5000));
+  const q = query(collection(db, 'payments'), where('paidAt', '>=', startAt), where('paidAt', '<=', endAt), orderBy('paidAt', 'desc'), limit(5000));
   const snap = await getDocs(q);
-  return snap.docs.map((d) => ({ id: d.id, ...(d.data() as Omit<PaymentRecord, 'id'>) }));
+  const raw = snap.docs.map((d) => ({ id: d.id, ...(d.data() as Omit<PaymentRecord, 'id'>) }));
+  const paid = raw.filter((p) => !p.status || p.status === 'paid');
+  const filtered = method && method !== 'todas' ? paid.filter((p) => p.method === method) : paid;
+  return filtered.sort((a, b) => b.paidAt - a.paidAt);
 }
 
 export async function fetchPaymentsRangePage(params: {
@@ -223,14 +223,13 @@ export async function fetchPaymentsRangePage(params: {
   const db = getFirebaseDb();
   if (!db) return { items: [], nextAfterPaidAt: null, nextAfterCursor: null };
 
-  const clauses: any[] = [where('status', '==', 'paid'), where('paidAt', '>=', startAt), where('paidAt', '<=', endAt)];
-  if (method && method !== 'todas') clauses.push(where('method', '==', method));
-
-  const qBase = query(collection(db, 'payments'), ...clauses, orderBy('paidAt', 'desc'));
+  const qBase = query(collection(db, 'payments'), where('paidAt', '>=', startAt), where('paidAt', '<=', endAt), orderBy('paidAt', 'desc'));
   const q = afterCursor ? query(qBase, startAfter(afterCursor), limit(size)) : afterPaidAt ? query(qBase, startAfter(afterPaidAt), limit(size)) : query(qBase, limit(size));
   const snap = await getDocs(q);
-  const items = snap.docs.map((d) => ({ id: d.id, ...(d.data() as Omit<PaymentRecord, 'id'>) }));
-  const nextAfterPaidAtValue = items.length ? items[items.length - 1].paidAt : null;
+  const raw = snap.docs.map((d) => ({ id: d.id, ...(d.data() as Omit<PaymentRecord, 'id'>) }));
+  const paid = raw.filter((p) => !p.status || p.status === 'paid');
+  const items = method && method !== 'todas' ? paid.filter((p) => p.method === method) : paid;
+  const nextAfterPaidAtValue = snap.docs.length ? (snap.docs[snap.docs.length - 1].data() as any)?.paidAt || null : null;
   const nextAfterCursorValue = snap.docs.length ? snap.docs[snap.docs.length - 1] : null;
   return { items, nextAfterPaidAt: nextAfterPaidAtValue, nextAfterCursor: nextAfterCursorValue };
 }
@@ -258,14 +257,13 @@ export async function fetchPaymentsRangeAll(params: {
       afterPaidAt,
       afterCursor,
     });
-    if (!page.items.length) break;
     for (const it of page.items) {
       items.push(it);
       if (items.length >= maxItems) return items;
     }
     afterPaidAt = page.nextAfterPaidAt;
     afterCursor = page.nextAfterCursor;
-    if (!afterPaidAt) break;
+    if (!afterPaidAt || !afterCursor) break;
   }
   return items;
 }
@@ -295,7 +293,25 @@ export async function fetchPaymentsRangeAggregate(params: {
   let afterCursor: QueryDocumentSnapshot<DocumentData> | null = null;
   for (let i = 0; i < 250; i += 1) {
     const page = await fetchPaymentsRangePage({ startAt, endAt, method, pageSize: 450, afterPaidAt, afterCursor });
-    if (!page.items.length) break;
+    if (!page.nextAfterPaidAt || !page.nextAfterCursor) {
+      for (const p of page.items) {
+        count += 1;
+        const cents = p.amountCents || 0;
+        totalCents += cents;
+
+        const svc = p.serviceName || 'Serviço';
+        const cli = p.userName || 'Cliente';
+        byService[svc] = (byService[svc] || 0) + cents;
+        byClient[cli] = (byClient[cli] || 0) + cents;
+
+        const dayMs = dayjs(p.paidAt).startOf('day').valueOf();
+        byDayMs[String(dayMs)] = (byDayMs[String(dayMs)] || 0) + cents;
+
+        const monthMs = dayjs(p.paidAt).startOf('month').valueOf();
+        byMonthMs[String(monthMs)] = (byMonthMs[String(monthMs)] || 0) + cents;
+      }
+      break;
+    }
 
     for (const p of page.items) {
       count += 1;
@@ -316,7 +332,7 @@ export async function fetchPaymentsRangeAggregate(params: {
 
     afterPaidAt = page.nextAfterPaidAt;
     afterCursor = page.nextAfterCursor;
-    if (!afterPaidAt) break;
+    if (!afterPaidAt || !afterCursor) break;
   }
 
   const topServices = Object.entries(byService)

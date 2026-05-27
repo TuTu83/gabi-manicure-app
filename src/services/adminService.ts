@@ -72,15 +72,13 @@ export function subscribeAllAppointments(params: {
   const start = dayjs(dateMs).startOf('day').valueOf();
   const end = dayjs(dateMs).endOf('day').valueOf();
 
-  const clauses: any[] = [where('startAt', '>=', start), where('startAt', '<=', end)];
-  if (status && status !== 'todos') clauses.push(where('status', '==', status));
-
-  const q = query(collection(db, 'appointments'), ...clauses, orderBy('startAt', 'asc'), limit(300));
+  const q = query(collection(db, 'appointments'), where('startAt', '>=', start), where('startAt', '<=', end), orderBy('startAt', 'asc'), limit(300));
   const unsub = onSnapshot(
     q,
     (snap) => {
       const items = snap.docs.map((d) => ({ id: d.id, ...(d.data() as Omit<Appointment, 'id'>) }));
-      onChange(items);
+      const filtered = status && status !== 'todos' ? items.filter((a) => a.status === status) : items;
+      onChange(filtered);
     },
     (error) => {
       console.error('[Admin] falha ao escutar agendamentos', error);

@@ -38,6 +38,14 @@ function App(props: { children: React.ReactNode }) {
     }
 
     const onBeforeInstallPrompt = (e: any) => {
+      const ua = String(window.navigator.userAgent || '');
+      const isMobile = /Android|iPhone|iPad|iPod/i.test(ua);
+      if (!isMobile) return;
+      if (isInstalledRef.current) return;
+      try {
+        const dontAskUntil = Number(window.localStorage.getItem('gm.pwa.promptDontAskUntil') || 0);
+        if (dontAskUntil && Date.now() < dontAskUntil) return;
+      } catch {}
       try {
         e.preventDefault();
       } catch {}
