@@ -2,7 +2,8 @@
 
 .container {
   min-height: 100vh;
-  padding: 0 $page-padding calc(56rpx + env(safe-area-inset-bottom));
+  min-height: 100dvh;
+  padding: 0 $page-padding calc(56rpx + env(safe-area-inset-bottom) + 24px);
   background: var(--color-bg-page);
   overflow-x: hidden;
   box-sizing: border-box;

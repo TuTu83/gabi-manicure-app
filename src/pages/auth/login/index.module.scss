@@ -2,8 +2,11 @@
 
 .container {
   min-height: 100vh;
-  padding: 64rpx $page-padding 0;
+  min-height: 100dvh;
+  padding: 64rpx $page-padding calc(56rpx + env(safe-area-inset-bottom) + 24px);
   background: linear-gradient(180deg, rgba(255, 127, 179, 0.18) 0%, var(--color-bg-page) 45%, var(--color-bg-page) 100%);
+  overflow-x: hidden;
+  box-sizing: border-box;
 }
 
 .header {

@@ -2,14 +2,18 @@
 
 .container {
   min-height: 100vh;
-  padding: 0 $page-padding 56rpx;
+  min-height: 100dvh;
+  padding: 0 $page-padding calc(56rpx + env(safe-area-inset-bottom) + 24px);
   background: var(--color-bg-page);
+  overflow-x: hidden;
+  box-sizing: border-box;
 }
 
 .header {
   margin: 0 (-$page-padding);
   padding: 64rpx $page-padding 56rpx;
   background: linear-gradient(180deg, rgba(232, 85, 143, 0.22) 0%, rgba(232, 85, 143, 0.08) 45%, var(--color-bg-page) 100%);
+  box-sizing: border-box;
 }
 
 .brandRow {
