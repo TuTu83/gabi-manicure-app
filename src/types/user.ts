@@ -8,6 +8,7 @@ export interface UserProfile {
   email?: string;
   provider: AuthProvider;
   createdAt: number;
+  role?: 'admin' | 'user';
   vip?: boolean;
   blocked?: boolean;
   adminNotes?: string;

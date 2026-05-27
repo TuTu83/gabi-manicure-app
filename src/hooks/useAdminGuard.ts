@@ -22,6 +22,10 @@ export function useAdminGuard() {
         }
 
         const email = (currentUser.email || '').trim().toLowerCase();
+        if (currentUser.role === 'admin') {
+          if (!cancelled) setAllowed(true);
+          return;
+        }
         if (!email) {
           if (!cancelled) {
             setAllowed(false);

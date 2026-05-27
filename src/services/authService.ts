@@ -258,6 +258,7 @@ export async function registerWithEmailPassword(input: {
     email,
     provider: 'password',
     createdAt: now,
+    role: 'user',
   };
 
   await setDoc(
@@ -340,6 +341,7 @@ export async function restoreSignedInProfile(): Promise<UserProfile | null> {
       email: auth.currentUser.email || undefined,
       provider: 'password',
       createdAt: now,
+      role: 'user',
     };
     await setDoc(
       doc(db, 'users', profile.id),

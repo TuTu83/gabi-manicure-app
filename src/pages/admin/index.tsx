@@ -121,6 +121,7 @@ function AdminPage() {
   const [serviceDesc, setServiceDesc] = useState('');
   const [servicePrice, setServicePrice] = useState('0');
   const [serviceDuration, setServiceDuration] = useState('60');
+  const [serviceDefaultProfessionalId, setServiceDefaultProfessionalId] = useState<string>('');
   const [serviceActive, setServiceActive] = useState(true);
   const [serviceImageUrl, setServiceImageUrl] = useState('');
   const [serviceSort, setServiceSort] = useState('1');
@@ -642,6 +643,7 @@ function AdminPage() {
     setServiceDesc('');
     setServicePrice('0');
     setServiceDuration('60');
+    setServiceDefaultProfessionalId('');
     setServiceActive(true);
     setServiceImageUrl('');
     setServiceSort('1');
@@ -654,6 +656,7 @@ function AdminPage() {
     setServiceDesc(s.description || '');
     setServicePrice(String(Math.round((s.priceCents || 0) / 100)));
     setServiceDuration(String(s.durationMinutes || 60));
+    setServiceDefaultProfessionalId(s.defaultProfessionalId || '');
     setServiceActive(s.active !== false);
     setServiceImageUrl(s.imageUrl || '');
     setServiceSort(String(s.sortOrder ?? 1));
@@ -688,6 +691,7 @@ function AdminPage() {
         description: serviceDesc.trim(),
         durationMinutes,
         priceCents,
+        defaultProfessionalId: serviceDefaultProfessionalId || undefined,
         active: serviceActive,
         imageUrl,
         sortOrder,
@@ -1525,8 +1529,9 @@ function AdminPage() {
                   <View key={s.id} className={styles.listItem} onClick={() => startEditService(s)}>
                     <Text className={styles.listTitle}>{s.name}</Text>
                     <Text className={styles.listSub}>
-                      {s.durationMinutes} min • {priceFromCents(s.priceCents)} • {s.active === false ? 'inativo' : 'ativo'}
+                      {priceFromCents(s.priceCents)} • {(professionals.find((p) => p.id === s.defaultProfessionalId)?.name || 'Profissional: -')}
                     </Text>
+                    {s.createdAt ? <Text className={styles.listSub}>Criado em {formatDateLabel(s.createdAt)}</Text> : null}
                     <View className={styles.badgeRow}>
                       <View className={styles.badge}>
                         <Text className={styles.badgeText}>ordem {s.sortOrder ?? '-'}</Text>
@@ -1637,7 +1642,9 @@ function AdminPage() {
                 .map((u) => (
                   <View key={u.id} className={styles.listItem} onClick={() => openClientEditor(u)}>
                     <Text className={styles.listTitle}>{u.socialName || u.fullName}</Text>
-                    <Text className={styles.listSub}>{u.phoneE164 || '-'} • {u.email || 'sem e-mail'}</Text>
+                    <Text className={styles.listSub}>
+                      {u.phoneE164 || '-'} • {u.email || 'sem e-mail'} • cadastro {u.createdAt ? formatDateLabel(u.createdAt) : '-'}
+                    </Text>
                     <View className={styles.badgeRow}>
                       {u.vip ? (
                         <View className={classnames(styles.badge, styles.badgePrimary)}>
@@ -1977,6 +1984,27 @@ function AdminPage() {
             <Text className={styles.fieldLabel}>Descrição</Text>
             <View className={styles.inputRow}>
               <Input className={styles.input} value={serviceDesc} onInput={(e) => setServiceDesc(e.detail.value)} placeholder="Detalhes do serviço" />
+            </View>
+
+            <Text className={styles.fieldLabel}>Profissional (opcional)</Text>
+            <View className={styles.inputRow}>
+              <Picker
+                mode="selector"
+                range={['Nenhum (deixar livre)', ...professionals.map((p) => p.name)]}
+                onChange={(e) => {
+                  const idx = Number(e.detail.value);
+                  if (idx <= 0) {
+                    setServiceDefaultProfessionalId('');
+                    return;
+                  }
+                  const p = professionals[idx - 1];
+                  setServiceDefaultProfessionalId(p?.id || '');
+                }}
+              >
+                <Text className={styles.pickValue}>
+                  {serviceDefaultProfessionalId ? professionals.find((p) => p.id === serviceDefaultProfessionalId)?.name || 'Selecionar' : 'Nenhum (deixar livre)'}
+                </Text>
+              </Picker>
             </View>
 
             <Text className={styles.fieldLabel}>Valor (R$)</Text>

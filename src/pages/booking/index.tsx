@@ -432,6 +432,9 @@ function BookingPage() {
                     className={classnames(styles.serviceItem, active && styles.serviceItemActive)}
                     onClick={() => {
                       setSelectedServiceId(s.id);
+                      if (s.defaultProfessionalId && professionals.some((p) => p.id === s.defaultProfessionalId)) {
+                        setSelectedProfessionalId(s.defaultProfessionalId);
+                      }
                       setSelectedSlotStartAt(null);
                     }}
                   >

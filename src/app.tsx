@@ -14,6 +14,7 @@ function App(props: { children: React.ReactNode }) {
   const installPromptRef = useRef<any>(null);
   const isInstalledRef = useRef(false);
   const promptingRef = useRef(false);
+  const installedOnceRef = useRef(false);
 
   useEffect(() => {
     return subscribeAppSettings((next) => setSettings(next));
@@ -27,6 +28,14 @@ function App(props: { children: React.ReactNode }) {
       (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches) ||
       (window.navigator as any).standalone === true;
     isInstalledRef.current = Boolean(standalone);
+    try {
+      installedOnceRef.current = Boolean(window.localStorage.getItem('gm.pwa.installedOnce'));
+    } catch {}
+    if (installedOnceRef.current && !isInstalledRef.current) {
+      try {
+        window.localStorage.removeItem('gm.pwa.promptDontAskUntil');
+      } catch {}
+    }
 
     const onBeforeInstallPrompt = (e: any) => {
       try {
@@ -37,6 +46,11 @@ function App(props: { children: React.ReactNode }) {
     const onAppInstalled = () => {
       isInstalledRef.current = true;
       installPromptRef.current = null;
+      installedOnceRef.current = true;
+      try {
+        window.localStorage.setItem('gm.pwa.installedOnce', '1');
+        window.localStorage.removeItem('gm.pwa.promptDontAskUntil');
+      } catch {}
     };
 
     window.addEventListener('beforeinstallprompt', onBeforeInstallPrompt as any);
@@ -58,12 +72,18 @@ function App(props: { children: React.ReactNode }) {
     const isMobile = /Android|iPhone|iPad|iPod/i.test(ua);
     if (!isMobile) return;
 
+    try {
+      const dontAskUntil = Number(window.localStorage.getItem('gm.pwa.promptDontAskUntil') || 0);
+      if (dontAskUntil && Date.now() < dontAskUntil) return;
+    } catch {}
+
     promptingRef.current = true;
     (async () => {
       try {
         const isIos = /iPhone|iPad|iPod/i.test(ua);
         const isIosSafari = isIos && /Safari/i.test(ua) && !/CriOS|FxiOS/i.test(ua);
         const canNativePrompt = Boolean(installPromptRef.current && typeof installPromptRef.current.prompt === 'function');
+        if (!canNativePrompt && !isIosSafari) return;
 
         const { confirm } = await Taro.showModal({
           title: 'Instalar aplicativo',
@@ -74,7 +94,13 @@ function App(props: { children: React.ReactNode }) {
           cancelText: 'Agora não',
         });
 
-        if (!confirm) return;
+        if (!confirm) {
+          try {
+            const oneWeek = 7 * 24 * 60 * 60 * 1000;
+            window.localStorage.setItem('gm.pwa.promptDontAskUntil', String(Date.now() + oneWeek));
+          } catch {}
+          return;
+        }
 
         if (canNativePrompt) {
           await installPromptRef.current.prompt();

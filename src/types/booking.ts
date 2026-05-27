@@ -6,9 +6,12 @@ export interface ServiceItem {
   description: string;
   durationMinutes: number;
   priceCents: number;
+  defaultProfessionalId?: string;
   active?: boolean;
   imageUrl?: string;
   sortOrder?: number;
+  createdAt?: number;
+  updatedAt?: number;
 }
 
 export interface Professional {

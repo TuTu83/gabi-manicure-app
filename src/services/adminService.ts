@@ -223,7 +223,10 @@ export async function upsertService(id: string | null, input: Omit<ServiceItem, 
   const db = getFirebaseDb();
   if (!db) throw new Error('Firebase indisponível');
   const ref = id ? doc(db, 'services', id) : doc(collection(db, 'services'));
-  await setDoc(ref, input, { merge: true });
+  const now = Date.now();
+  const payload: any = { ...input, updatedAt: now };
+  if (!id) payload.createdAt = now;
+  await setDoc(ref, payload, { merge: true });
 }
 
 export async function deleteService(id: string): Promise<void> {
