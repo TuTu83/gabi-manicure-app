@@ -1,6 +1,8 @@
+self.GM_PWA_CACHE = 'gm-pwa-v2';
+
 self.addEventListener('install', (event) => {
   event.waitUntil(
-    caches.open('gm-pwa-v1').then((cache) => {
+    caches.open(self.GM_PWA_CACHE).then((cache) => {
       return cache.addAll(['/','/index.html','/manifest.webmanifest','/icon.svg']).catch(() => undefined);
     }),
   );
@@ -8,7 +10,15 @@ self.addEventListener('install', (event) => {
 });
 
 self.addEventListener('activate', (event) => {
-  event.waitUntil(self.clients.claim());
+  event.waitUntil(
+    Promise.all([
+      caches
+        .keys()
+        .then((keys) => Promise.all(keys.filter((k) => k.startsWith('gm-pwa-') && k !== self.GM_PWA_CACHE).map((k) => caches.delete(k))))
+        .catch(() => undefined),
+      self.clients.claim(),
+    ]),
+  );
 });
 
 self.addEventListener('fetch', (event) => {
@@ -22,7 +32,7 @@ self.addEventListener('fetch', (event) => {
       fetch(req)
         .then((res) => {
           const copy = res.clone();
-          caches.open('gm-pwa-v1').then((cache) => cache.put('/index.html', copy)).catch(() => undefined);
+          caches.open(self.GM_PWA_CACHE).then((cache) => cache.put('/index.html', copy)).catch(() => undefined);
           return res;
         })
         .catch(() => caches.match('/index.html')),
@@ -35,7 +45,7 @@ self.addEventListener('fetch', (event) => {
       if (cached) return cached;
       return fetch(req).then((res) => {
         const copy = res.clone();
-        caches.open('gm-pwa-v1').then((cache) => cache.put(req, copy)).catch(() => undefined);
+        caches.open(self.GM_PWA_CACHE).then((cache) => cache.put(req, copy)).catch(() => undefined);
         return res;
       });
     }),
