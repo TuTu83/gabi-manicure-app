@@ -4,12 +4,15 @@
   min-height: 100vh;
   padding: 0 $page-padding 56rpx;
   background: var(--color-bg-page);
+  overflow-x: hidden;
+  box-sizing: border-box;
 }
 
 .header {
   margin: 0 (-$page-padding);
   padding: 56rpx $page-padding 40rpx;
   background: linear-gradient(180deg, rgba(232, 85, 143, 0.18) 0%, rgba(232, 85, 143, 0.07) 45%, var(--color-bg-page) 100%);
+  box-sizing: border-box;
 }
 
 .brandRow {
@@ -17,6 +20,7 @@
   align-items: center;
   gap: 16rpx;
   margin-bottom: 18rpx;
+  min-width: 0;
 }
 
 .brandLogo {
@@ -36,30 +40,41 @@
 }
 
 .brandName {
+  display: block;
   font-size: 26rpx;
   font-weight: $font-weight-semibold;
   color: var(--color-text-primary);
   letter-spacing: 0.2rpx;
+  min-width: 0;
+  max-width: 520rpx;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .title {
+  display: block;
   font-size: 44rpx;
   font-weight: $font-weight-semibold;
   color: var(--color-text-primary);
   margin-bottom: 12rpx;
   line-height: $line-height-tight;
+  word-break: break-word;
 }
 
 .desc {
+  display: block;
   font-size: 24rpx;
   color: var(--color-text-tertiary);
   line-height: $line-height-loose;
+  word-break: break-word;
 }
 
 .tabs {
   margin-top: 24rpx;
   display: flex;
   gap: 12rpx;
+  flex-wrap: wrap;
 }
 
 .tabBtn {
@@ -70,6 +85,8 @@
   border: 1rpx solid var(--color-border);
   background: rgba(255, 255, 255, 0.65);
   backdrop-filter: blur(16rpx);
+  flex: 1 1 0;
+  min-width: 210rpx;
 }
 
 .tabBtnActive {
@@ -92,6 +109,8 @@
   display: flex;
   flex-wrap: wrap;
   gap: 16rpx;
+  width: 100%;
+  box-sizing: border-box;
 }
 
 .pickCard {
@@ -119,9 +138,10 @@
   font-size: 26rpx;
   color: var(--color-text-primary);
   font-weight: $font-weight-medium;
-  max-width: 420rpx;
+  max-width: 62%;
   text-align: right;
-  @include text-ellipsis;
+  white-space: normal;
+  word-break: break-word;
 }
 
 .serviceItem {
@@ -161,16 +181,20 @@
 }
 
 .serviceName {
+  display: block;
   font-size: 30rpx;
   font-weight: $font-weight-semibold;
   color: var(--color-text-primary);
   margin-bottom: 8rpx;
+  word-break: break-word;
 }
 
 .serviceDesc {
+  display: block;
   font-size: 24rpx;
   color: var(--color-text-tertiary);
   line-height: $line-height-loose;
+  word-break: break-word;
 }
 
 .metaRow {
@@ -178,6 +202,8 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
+  gap: 16rpx;
+  flex-wrap: wrap;
 }
 
 .metaText {
