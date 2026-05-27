@@ -120,7 +120,6 @@ function AdminPage() {
   const [serviceDesc, setServiceDesc] = useState('');
   const [servicePrice, setServicePrice] = useState('0');
   const [serviceDurationMinutes, setServiceDurationMinutes] = useState(60);
-  const [serviceDefaultProfessionalId, setServiceDefaultProfessionalId] = useState<string>('');
   const [serviceActive, setServiceActive] = useState(true);
   const [serviceImageUrl, setServiceImageUrl] = useState('');
   const [serviceImagePreviewBroken, setServiceImagePreviewBroken] = useState(false);
@@ -671,7 +670,6 @@ function AdminPage() {
     setServiceDesc('');
     setServicePrice('0');
     setServiceDurationMinutes(60);
-    setServiceDefaultProfessionalId('');
     setServiceActive(true);
     setServiceImageUrl('');
     setServiceImagePreviewBroken(false);
@@ -685,7 +683,6 @@ function AdminPage() {
     setServiceDesc(s.description || '');
     setServicePrice(String(Math.round((s.priceCents || 0) / 100)));
     setServiceDurationMinutes(s.durationMinutes || 60);
-    setServiceDefaultProfessionalId(s.defaultProfessionalId || '');
     setServiceActive(s.active !== false);
     setServiceImageUrl(s.imageUrl || '');
     setServiceImagePreviewBroken(false);
@@ -714,21 +711,21 @@ function AdminPage() {
     const durationMinutes = Math.max(10, Number(serviceDurationMinutes) || 60);
 
     await runSafe(async () => {
-      const imageUrl =
-        serviceImageUrl && !serviceImageUrl.startsWith('http')
-          ? await uploadImageFromPath({ filePath: serviceImageUrl, target: 'services', fileNamePrefix: name })
-          : serviceImageUrl.trim() || undefined;
+      const imageUrlOrNull = serviceImageUrl
+        ? serviceImageUrl.startsWith('http')
+          ? serviceImageUrl.trim() || null
+          : await uploadImageFromPath({ filePath: serviceImageUrl, target: 'services', fileNamePrefix: name })
+        : null;
 
       await upsertService(serviceEditingId, {
         name,
         description: serviceDesc.trim(),
         durationMinutes,
         priceCents,
-        defaultProfessionalId: serviceDefaultProfessionalId || undefined,
         active: serviceActive,
-        imageUrl,
+        imageUrl: imageUrlOrNull,
         sortOrder,
-      });
+      } as any);
       if (currentUser) {
         createAdminLog({
           actor: currentUser,
@@ -1303,7 +1300,7 @@ function AdminPage() {
                   <View key={s.id} className={styles.listItem} onClick={() => startEditService(s)}>
                     <Text className={styles.listTitle}>{s.name}</Text>
                     <Text className={styles.listSub}>
-                      {priceFromCents(s.priceCents)} • {(professionals.find((p) => p.id === s.defaultProfessionalId)?.name || 'Profissional: -')}
+                      {priceFromCents(s.priceCents)}
                     </Text>
                     {s.createdAt ? <Text className={styles.listSub}>Criado em {formatDateLabel(s.createdAt)}</Text> : null}
                     <View className={styles.badgeRow}>
@@ -2058,30 +2055,6 @@ function AdminPage() {
             <Text className={styles.fieldLabel}>Descrição</Text>
             <View className={styles.inputRow}>
               <Input className={styles.input} value={serviceDesc} onInput={(e) => setServiceDesc(e.detail.value)} placeholder="Detalhes do serviço" />
-            </View>
-
-            <Text className={styles.fieldLabel}>Profissional (opcional)</Text>
-            <View className={styles.inputRow}>
-              <Picker
-                mode="selector"
-                range={['Nenhum (deixar livre)', ...professionals.map((p) => p.name)]}
-                value={
-                  serviceDefaultProfessionalId ? Math.max(0, professionals.findIndex((p) => p.id === serviceDefaultProfessionalId)) + 1 : 0
-                }
-                onChange={(e) => {
-                  const idx = Number(e.detail.value);
-                  if (idx <= 0) {
-                    setServiceDefaultProfessionalId('');
-                    return;
-                  }
-                  const p = professionals[idx - 1];
-                  setServiceDefaultProfessionalId(p?.id || '');
-                }}
-              >
-                <Text className={styles.pickValue}>
-                  {serviceDefaultProfessionalId ? professionals.find((p) => p.id === serviceDefaultProfessionalId)?.name || 'Selecionar' : 'Nenhum (deixar livre)'}
-                </Text>
-              </Picker>
             </View>
 
             <Text className={styles.fieldLabel}>Valor (R$)</Text>

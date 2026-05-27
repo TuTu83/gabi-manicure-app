@@ -453,9 +453,6 @@ function BookingPage() {
                           const next = has ? prev.filter((id) => id !== s.id) : [...prev, s.id];
                           return next;
                         });
-                        if (s.defaultProfessionalId && professionals.some((p) => p.id === s.defaultProfessionalId)) {
-                          setSelectedProfessionalId(s.defaultProfessionalId);
-                        }
                         setSelectedSlotStartAt(null);
                       }}
                     >
