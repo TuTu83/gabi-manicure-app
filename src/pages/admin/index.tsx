@@ -1122,24 +1122,24 @@ function AdminPage() {
       <LoadingOverlay visible={busy} title="Aguarde…" description="Salvando alterações e atualizando em tempo real." />
 
       <View className={styles.header}>
-        <View className={styles.titleRow}>
-          <View style={{ display: 'flex', alignItems: 'center', gap: '16rpx' }}>
-            {settings.logoUrl ? (
-              <Image src={settings.logoUrl} mode="aspectFit" style={{ width: '56rpx', height: '56rpx', borderRadius: '18rpx' }} />
-            ) : null}
-            <Text className={styles.title}>{settings.appName || 'Painel Admin'}</Text>
-            <View className={styles.pill}>
-              <Text className={styles.pillText}>Admin</Text>
-            </View>
+        <View className={styles.brandRow}>
+          {settings.logoUrl ? (
+            <Image className={styles.brandLogo} src={settings.logoUrl} mode="aspectFit" />
+          ) : (
+            <View className={styles.brandLogoFallback} />
+          )}
+          <View className={styles.pill}>
+            <Text className={styles.pillText}>Admin</Text>
           </View>
-          <View className={styles.row} style={{ justifyContent: 'flex-end' }}>
-            <View className={styles.pill}>
-              <Text className={styles.pillText}>{currentUser?.email || 'e-mail não informado'}</Text>
-            </View>
-            <Button className={styles.btnSecondary} onClick={() => Taro.switchTab({ url: '/pages/index/index' })}>
-              <Text className={styles.btnSecondaryText}>Voltar</Text>
-            </Button>
+        </View>
+        <Text className={styles.title}>{settings.appName || 'Painel Admin'}</Text>
+        <View className={styles.headerActions}>
+          <View className={styles.pill}>
+            <Text className={styles.pillText}>{currentUser?.email || 'e-mail não informado'}</Text>
           </View>
+          <Button className={styles.btnSecondary} onClick={() => Taro.switchTab({ url: '/pages/index/index' })}>
+            <Text className={styles.btnSecondaryText}>Voltar</Text>
+          </Button>
         </View>
         <Text className={styles.subtitle}>Todos os módulos começam recolhidos. Expanda apenas o que desejar.</Text>
       </View>

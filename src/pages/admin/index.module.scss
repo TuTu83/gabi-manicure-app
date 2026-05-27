@@ -4,12 +4,15 @@
   min-height: 100vh;
   padding: 0 $page-padding 56rpx;
   background: var(--color-bg-page);
+  overflow-x: hidden;
+  box-sizing: border-box;
 }
 
 .header {
   margin: 0 (-$page-padding);
   padding: 56rpx $page-padding 40rpx;
   background: linear-gradient(180deg, rgba(232, 85, 143, 0.18) 0%, rgba(232, 85, 143, 0.07) 45%, var(--color-bg-page) 100%);
+  box-sizing: border-box;
 }
 
 .titleRow {
@@ -19,11 +22,37 @@
   gap: 16rpx;
 }
 
+.brandRow {
+  display: flex;
+  align-items: center;
+  gap: 16rpx;
+  margin-bottom: 16rpx;
+  min-width: 0;
+}
+
+.brandLogo {
+  width: 56rpx;
+  height: 56rpx;
+  border-radius: 18rpx;
+  background: rgba(0, 0, 0, 0.04);
+}
+
+.brandLogoFallback {
+  width: 56rpx;
+  height: 56rpx;
+  border-radius: 18rpx;
+  border: 1rpx solid var(--color-border);
+  background: rgba(255, 255, 255, 0.65);
+  backdrop-filter: blur(16rpx);
+}
+
 .title {
+  display: block;
   font-size: 44rpx;
   font-weight: $font-weight-semibold;
   color: var(--color-text-primary);
   line-height: $line-height-tight;
+  word-break: break-word;
 }
 
 .subtitle {
@@ -31,6 +60,17 @@
   font-size: 24rpx;
   color: var(--color-text-tertiary);
   line-height: $line-height-loose;
+  word-break: break-word;
+}
+
+.headerActions {
+  margin-top: 16rpx;
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 12rpx;
+  flex-wrap: wrap;
+  width: 100%;
 }
 
 .content {
@@ -78,6 +118,8 @@
   align-items: center;
   justify-content: space-between;
   gap: 16rpx;
+  flex-wrap: wrap;
+  width: 100%;
 }
 
 .pill {
@@ -85,11 +127,13 @@
   border-radius: 999rpx;
   border: 1rpx solid var(--color-border);
   background: var(--color-bg-hover);
+  max-width: 100%;
 }
 
 .pillText {
   font-size: 22rpx;
   color: var(--color-text-secondary);
+  word-break: break-word;
 }
 
 .btnPrimary {
