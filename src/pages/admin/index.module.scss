@@ -149,6 +149,12 @@
   transition: all $transition-base;
 }
 
+.serviceCardInactive {
+  background: var(--color-bg-hover);
+  border-color: rgba(211, 47, 47, 0.35);
+  opacity: 0.92;
+}
+
 .serviceCard:hover {
   transform: translateY(-1rpx);
 }
@@ -174,6 +180,7 @@
 }
 
 .serviceName {
+  display: block;
   font-size: 28rpx;
   font-weight: $font-weight-semibold;
   color: var(--color-text-primary);
@@ -181,6 +188,7 @@
 }
 
 .serviceDescription {
+  display: block;
   font-size: 24rpx;
   color: var(--color-text-tertiary);
   margin-bottom: 10rpx;
@@ -207,6 +215,17 @@
   gap: 12rpx;
   flex-wrap: wrap;
   padding: 0 20rpx 20rpx;
+}
+
+.serviceToggle {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 120rpx;
+  height: $button-height-sm;
+  border-radius: $radius-button;
+  border: 1rpx solid var(--color-border);
+  background: var(--color-bg-card);
 }
 
 .serviceActionBtn {
@@ -359,6 +378,40 @@
   font-size: 24rpx;
   color: var(--color-text-tertiary);
   line-height: $line-height-loose;
+}
+
+.clientLine {
+  display: block;
+}
+
+.waRow {
+  display: flex;
+  align-items: center;
+  gap: 10rpx;
+  margin-top: 6rpx;
+}
+
+.waIcon {
+  width: 30rpx;
+  height: 30rpx;
+  border-radius: 999rpx;
+  background: #25d366;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+}
+
+.waIconText {
+  font-size: 18rpx;
+  color: #ffffff;
+  font-weight: $font-weight-semibold;
+}
+
+.waValue {
+  font-size: 24rpx;
+  color: var(--color-text-tertiary);
+  text-decoration: underline;
 }
 
 .badgeRow {

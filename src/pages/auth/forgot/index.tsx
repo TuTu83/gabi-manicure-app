@@ -17,7 +17,7 @@ function ForgotPasswordPage() {
       Taro.showToast({ title: 'E-mail enviado', icon: 'success' });
       Taro.redirectTo({ url: '/pages/auth/login/index' });
     } catch (error: any) {
-      setErrorText(error?.message || 'Não foi possível enviar o código');
+      setErrorText(error?.message || 'Não foi possível enviar o e-mail');
     } finally {
       setLoading(false);
     }

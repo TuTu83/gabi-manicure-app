@@ -3,9 +3,9 @@ import { Button, Image, ScrollView, Text, View } from '@tarojs/components';
 import Taro from '@tarojs/taro';
 import SectionHeader from '@/components/SectionHeader';
 import { fetchPromotions, fetchServices } from '@/services/catalogService';
-import { formatDateLabel, formatTime, subscribeUserAppointments } from '@/services/appointmentService';
+import { formatDateLabel, formatTime, markOnMyWay, subscribeUserAppointments } from '@/services/appointmentService';
 import { signOut as signOutService } from '@/services/authService';
-import { maybeSendAppointmentReminder } from '@/services/notificationService';
+import { createNotification, maybeSendAppointmentReminder, maybeSendAppointmentStartNotification, requestNotificationPermission } from '@/services/notificationService';
 import { useAppStore } from '@/store/appStore';
 import { getFirstName } from '@/utils/validators';
 import type { Appointment, Promotion, ServiceItem } from '@/types/booking';
@@ -57,9 +57,54 @@ function HomePage() {
   }, [currentUser?.id]);
 
   useEffect(() => {
+    if (process.env.TARO_ENV !== 'h5' || !currentUser?.id) return;
+    const anyWindow = window as any;
+    const params = new URLSearchParams(anyWindow.location.search || '');
+    const action = params.get('notificationAction');
+    const appointmentId = params.get('appointmentId');
+    if (action !== 'on_my_way' || !appointmentId) return;
+
+    const targetAppointment = appointments.find((a) => a.id === appointmentId && a.userId === currentUser.id);
+    if (!targetAppointment || targetAppointment.onMyWayAt) return;
+
+    const processAction = async () => {
+      try {
+        await markOnMyWay(appointmentId);
+        await createNotification({
+          target: 'admin',
+          type: 'cliente_a_caminho',
+          title: 'Cliente a caminho',
+          body: `${targetAppointment.userName} informou que está a caminho.`,
+          appointmentId,
+        });
+        Taro.showToast({ title: 'Aviso enviado', icon: 'success' });
+      } catch (error: any) {
+        console.warn('[Home] falha ao processar ação de notificação', error?.message || error);
+      } finally {
+        params.delete('notificationAction');
+        params.delete('appointmentId');
+        const newSearch = params.toString();
+        const newUrl = `${anyWindow.location.pathname}${newSearch ? `?${newSearch}` : ''}`;
+        anyWindow.history.replaceState({}, '', newUrl);
+      }
+    };
+
+    processAction();
+  }, [appointments, currentUser?.id]);
+
+  useEffect(() => {
     if (!currentUser?.id) return;
     maybeSendAppointmentReminder(currentUser.id, appointments);
+    maybeSendAppointmentStartNotification(currentUser.id, appointments);
   }, [appointments, currentUser?.id]);
+
+  useEffect(() => {
+    if (process.env.TARO_ENV !== 'h5' || !currentUser?.id) return;
+    const anyWindow = window as any;
+    if (anyWindow?.Notification?.permission === 'default') {
+      requestNotificationPermission();
+    }
+  }, [currentUser?.id]);
 
   const nextAppointment = useMemo(() => {
     const now = Date.now();
@@ -155,16 +200,6 @@ function HomePage() {
               <Text className={styles.serviceDesc}>{s.description}</Text>
             </View>
           ))}
-        </View>
-
-        <View className={styles.card}>
-          <View className={styles.cardTitleRow}>
-            <Text className={styles.cardTitle}>Conta</Text>
-            <Text className={styles.cardDesc}>Telefone verificado</Text>
-          </View>
-          <Text className={styles.cardDesc}>
-            {currentUser?.phoneE164 ? `Telefone: ${currentUser.phoneE164}` : 'Complete seu telefone para manter sua conta segura.'}
-          </Text>
         </View>
       </View>
     </View>

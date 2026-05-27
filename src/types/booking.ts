@@ -96,6 +96,7 @@ export interface WaitlistEntry {
 export type NotificationType =
   | 'confirmacao_agendamento'
   | 'lembrete_agendamento'
+  | 'inicio_agendamento'
   | 'alteracao_agendamento'
   | 'cancelamento_agendamento'
   | 'cliente_a_caminho';
@@ -108,6 +109,7 @@ export interface InAppNotification {
   title: string;
   body: string;
   createdAt: number;
+  deliveredAt?: number;
   readAt?: number;
   appointmentId?: string;
 }

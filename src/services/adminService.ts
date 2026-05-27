@@ -2,8 +2,8 @@ import Taro from '@tarojs/taro';
 import dayjs from 'dayjs';
 import {
   collection,
+  deleteDoc,
   doc,
-  getDoc,
   limit,
   onSnapshot,
   orderBy,
@@ -12,39 +12,35 @@ import {
   updateDoc,
   where,
 } from 'firebase/firestore';
-import { getFirebaseDb, isFirebaseConfigured } from '@/services/firebase';
+import { getFirebaseDb, isFirebaseConfigured, removeUndefinedFields } from '@/services/firebase';
 import { consumeRateLimit } from '@/services/storage';
 import type { Appointment, AppointmentStatus, Promotion, ServiceItem } from '@/types/booking';
 import type { UserProfile } from '@/types/user';
 
 type Unsubscribe = () => void;
 
-const defaultAdminEmails = ['suporte.gabimanicure@gmail.com'];
+export const ADMIN_EMAIL = 'suporte.gabimanicure@gmail.com';
 const localUsersKey = 'gm.users';
 
-export async function getAdminEmails(): Promise<string[]> {
-  const base = defaultAdminEmails.map((e) => (e || '').trim().toLowerCase()).filter(Boolean);
-  if (!isFirebaseConfigured()) return base;
-  const db = getFirebaseDb();
-  if (!db) return base;
-
+function isServicesDebugEnabled(): boolean {
   try {
-    const snap = await getDoc(doc(db, 'admin', 'config'));
-    if (!snap.exists()) return base;
-    const emails = (snap.data() as any).emails as string[] | undefined;
-    const normalized = (emails || []).map((e) => (e || '').trim().toLowerCase()).filter(Boolean);
-    return Array.from(new Set([...base, ...normalized]));
-  } catch (error) {
-    console.error('[Admin] falha ao ler configuração de admin', error);
-    return base;
+    const loc = (globalThis as any).location as Location | undefined;
+    const search = String(loc?.search || '');
+    const hash = String(loc?.hash || '');
+    return search.includes('debugServices=1') || hash.includes('debugServices=1') || search.includes('firebaseDebug=1') || hash.includes('firebaseDebug=1');
+  } catch {
+    return false;
   }
+}
+
+export async function getAdminEmails(): Promise<string[]> {
+  return [ADMIN_EMAIL];
 }
 
 export async function isAdminUser(user: UserProfile | null): Promise<boolean> {
   const email = (user?.email || '').trim().toLowerCase();
   if (!email) return false;
-  const allow = await getAdminEmails();
-  return allow.includes(email);
+  return email === ADMIN_EMAIL;
 }
 
 export async function assertAdminUser(user: UserProfile | null): Promise<void> {
@@ -177,7 +173,35 @@ export function subscribeAllServices(onChange: (items: ServiceItem[]) => void): 
   const unsub = onSnapshot(
     q,
     (snap) => {
-      const items = snap.docs.map((d) => ({ id: d.id, ...(d.data() as Omit<ServiceItem, 'id'>) }));
+      const items = snap.docs.map((d) => {
+        const raw = d.data() as Omit<ServiceItem, 'id'>;
+        const rawActive: any = (raw as any).active;
+        const activeBool = !(rawActive === false || rawActive === 'false' || rawActive === 0 || rawActive === '0');
+        const priceCentsNum = Number((raw as any).priceCents ?? 0);
+        const sortOrderNum = Number((raw as any).sortOrder ?? 0);
+        return {
+          id: d.id,
+          ...raw,
+          active: activeBool,
+          priceCents: Number.isFinite(priceCentsNum) ? priceCentsNum : 0,
+          sortOrder: Number.isFinite(sortOrderNum) ? sortOrderNum : undefined,
+        } as ServiceItem;
+      });
+      if (isServicesDebugEnabled()) {
+        console.log('[SERVICES][RAW SNAPSHOT]', snap.docs.map((d) => ({ id: d.id, ...(d.data() as any) })));
+        console.log(
+          '[SERVICES][NORMALIZED]',
+          items.map((s) => ({
+            id: s.id,
+            name: s.name,
+            active: (s as any).active,
+            activeType: typeof (s as any).active,
+            priceCents: (s as any).priceCents,
+            priceType: typeof (s as any).priceCents,
+            sortOrder: (s as any).sortOrder,
+          })),
+        );
+      }
       onChange(items);
     },
     (error) => {
@@ -222,16 +246,29 @@ export async function upsertService(id: string | null, input: Omit<ServiceItem, 
   if (!db) throw new Error('Firebase indisponível');
   const ref = id ? doc(db, 'services', id) : doc(collection(db, 'services'));
   const now = Date.now();
-  const payload: any = { ...input, updatedAt: now };
+  const inputActive: any = (input as any).active;
+  const activeBool = !(inputActive === false || inputActive === 'false' || inputActive === 0 || inputActive === '0');
+  const payload: any = removeUndefinedFields({
+    ...input,
+    active: activeBool,
+    updatedAt: now,
+  });
   if (!id) payload.createdAt = now;
   await setDoc(ref, payload, { merge: true });
+}
+
+export async function setServiceActive(id: string, active: boolean): Promise<void> {
+  if (!isFirebaseConfigured()) throw new Error('Firebase não configurado');
+  const db = getFirebaseDb();
+  if (!db) throw new Error('Firebase indisponível');
+  await updateDoc(doc(db, 'services', id), removeUndefinedFields({ active, updatedAt: Date.now() }) as any);
 }
 
 export async function deleteService(id: string): Promise<void> {
   if (!isFirebaseConfigured()) throw new Error('Firebase não configurado');
   const db = getFirebaseDb();
   if (!db) throw new Error('Firebase indisponível');
-  await updateDoc(doc(db, 'services', id), { active: false });
+  await deleteDoc(doc(db, 'services', id));
 }
 
 export async function upsertPromotion(id: string | null, input: Omit<Promotion, 'id'> & { updatedAt?: number }): Promise<void> {

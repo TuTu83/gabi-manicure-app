@@ -24,7 +24,7 @@ import {
   subscribeBusyForProfessionalDay,
   subscribeUserAppointments,
 } from '@/services/appointmentService';
-import { createNotification, maybeSendAppointmentReminder, requestNotificationPermission } from '@/services/notificationService';
+import { createNotification, maybeSendAppointmentReminder, maybeSendAppointmentStartNotification, requestNotificationPermission } from '@/services/notificationService';
 import { startOfDayMs } from '@/services/financeService';
 import { useAppStore } from '@/store/appStore';
 import type { Appointment, AppointmentStatus, Professional, ServiceItem } from '@/types/booking';
@@ -67,7 +67,7 @@ function BookingPage() {
   const [reviewComment, setReviewComment] = useState('');
 
   const displayedServices = useMemo(
-    () => services.filter((s) => (s.name || '').trim().length > 0 && (s.priceCents ?? 0) > 0),
+    () => services.filter((s) => s.active === true && (s.name || '').trim().length > 0 && (s.priceCents ?? 0) > 0),
     [services],
   );
   const visibleServiceIds = useMemo(
@@ -216,6 +216,39 @@ function BookingPage() {
   }, []);
 
   useEffect(() => {
+    try {
+      const loc = (globalThis as any).location as Location | undefined;
+      const search = String(loc?.search || '');
+      const hash = String(loc?.hash || '');
+      const debugEnabled =
+        search.includes('debugServices=1') || hash.includes('debugServices=1') || search.includes('firebaseDebug=1') || hash.includes('firebaseDebug=1');
+      if (!debugEnabled) return;
+
+      console.log(
+        '[BOOKING][RAW SERVICES]',
+        services.map((s) => ({
+          id: s.id,
+          name: s.name,
+          active: (s as any).active,
+          activeType: typeof (s as any).active,
+          priceCents: (s as any).priceCents,
+          priceType: typeof (s as any).priceCents,
+        })),
+      );
+      console.log(
+        '[BOOKING][FILTERED SERVICES]',
+        displayedServices.map((s) => ({
+          id: s.id,
+          name: s.name,
+          active: (s as any).active,
+          priceCents: (s as any).priceCents,
+        })),
+      );
+      console.log('[BOOKING][COUNTS]', { raw: services.length, filtered: displayedServices.length });
+    } catch {}
+  }, [services, displayedServices]);
+
+  useEffect(() => {
     if (!professionals.length) return;
     const exists = professionals.some((p) => p.id === selectedProfessionalId);
     if (!exists) setSelectedProfessionalId(professionals[0].id);
@@ -229,7 +262,16 @@ function BookingPage() {
   useEffect(() => {
     if (!userId) return;
     maybeSendAppointmentReminder(userId, appointments);
+    maybeSendAppointmentStartNotification(userId, appointments);
   }, [appointments, userId]);
+
+  useEffect(() => {
+    if (process.env.TARO_ENV !== 'h5' || !userId) return;
+    const anyWindow = window as any;
+    if (anyWindow?.Notification?.permission === 'default') {
+      requestNotificationPermission();
+    }
+  }, [userId]);
 
   useEffect(() => {
     if (!selectedProfessionalId || !selectedDateMs) return;
@@ -272,7 +314,7 @@ function BookingPage() {
       const appointment = await createAppointment({
         userId: currentUser.id,
         userName: currentUser.socialName || currentUser.fullName,
-        phoneE164: currentUser.phoneE164,
+        phoneE164: currentUser.phoneE164 || '',
         serviceId: selectedServices[0].id,
         serviceName: combinedServiceName || selectedServices[0].name,
         serviceIds: selectedServices.map((s) => s.id),
@@ -469,7 +511,7 @@ function BookingPage() {
       await createWaitlistEntry({
         userId: currentUser.id,
         userName: currentUser.socialName || currentUser.fullName,
-        phoneE164: currentUser.phoneE164,
+        phoneE164: currentUser.phoneE164 || '',
         serviceId: selectedService.id,
         professionalId: selectedProfessional.id,
         dateKey,
@@ -727,7 +769,7 @@ function BookingPage() {
                   <AppCard>
                     <View className={styles.paymentGrid}>
                       {[
-                        { key: 'pix', label: 'PIX', subtitle: 'Online ou na hora' },
+                        { key: 'pix', label: 'PIX', subtitle: 'Presencial no dia' },
                         { key: 'dinheiro', label: 'Dinheiro', subtitle: 'Presencial no dia' },
                         { key: 'credito', label: 'Cartão Crédito', subtitle: 'Presencial no dia' },
                         { key: 'debito', label: 'Cartão Débito', subtitle: 'Presencial no dia' },

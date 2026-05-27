@@ -8,7 +8,7 @@ import AdminAccordion from '@/components/AdminAccordion';
 import LoadingOverlay from '@/components/LoadingOverlay';
 import MiniBarChart, { type BarChartItem } from '@/components/MiniBarChart';
 import { useAdminGuard } from '@/hooks/useAdminGuard';
-import { subscribeAppointmentsRange, subscribeAllAppointments, subscribeAllPromotions, subscribeAllServices, subscribeAllUsers, setUserAdminFields, upsertPromotion, upsertService, deleteService } from '@/services/adminService';
+import { subscribeAppointmentsRange, subscribeAllAppointments, subscribeAllPromotions, subscribeAllServices, subscribeAllUsers, setUserAdminFields, setServiceActive as setServiceActiveDoc, upsertPromotion, upsertService, deleteService } from '@/services/adminService';
 import { fetchProfessionals } from '@/services/catalogService';
 import { createAdminLog } from '@/services/adminLogService';
 import {
@@ -22,11 +22,13 @@ import {
   setAppointmentStatus,
 } from '@/services/appointmentService';
 import { endOfDayMs, fetchPaymentsRangeAll, fetchPaymentsRangeAggregate, fetchPaymentsRangePage, startOfDayMs, subscribePaymentsRange } from '@/services/financeService';
-import { createNotification } from '@/services/notificationService';
+import { createNotification, requestNotificationPermission, showSystemNotification, subscribeAdminNotifications } from '@/services/notificationService';
 import { updateAppSettings } from '@/services/settingsService';
 import { uploadImageFromPath } from '@/services/uploadService';
+import { openWhatsAppToPhone } from '@/services/whatsappService';
 import { useAppStore } from '@/store/appStore';
-import type { Appointment, AppointmentStatus, Professional, Promotion, ServiceItem } from '@/types/booking';
+import { formatPhoneBRDisplay } from '@/utils/validators';
+import type { Appointment, AppointmentStatus, InAppNotification, Professional, Promotion, ServiceItem } from '@/types/booking';
 import type { PaymentMethod, PaymentRecord } from '@/types/finance';
 import type { UserProfile } from '@/types/user';
 import styles from './index.module.scss';
@@ -51,10 +53,13 @@ function AdminPage() {
     finance: false,
     promotions: false,
     clients: false,
+    notifications: false,
     settings: false,
   });
 
   const [professionals, setProfessionals] = useState<Professional[]>([]);
+  const [adminNotifications, setAdminNotifications] = useState<InAppNotification[]>([]);
+  const adminNotificationsRef = useRef<InAppNotification[]>([]);
 
   const [users, setUsers] = useState<UserProfile[]>([]);
   const [dayAppointments, setDayAppointments] = useState<Appointment[]>([]);
@@ -94,6 +99,16 @@ function AdminPage() {
 
   const [busy, setBusy] = useState(false);
   const [errorText, setErrorText] = useState<string | null>(null);
+
+  const readSwitchValue = (value: any): boolean => {
+    if (value === true) return true;
+    if (value === false) return false;
+    if (value === 1 || value === '1') return true;
+    if (value === 0 || value === '0') return false;
+    if (value === 'true') return true;
+    if (value === 'false') return false;
+    return Boolean(value);
+  };
 
   const [filterDateMs] = useState<number>(() => Date.now());
   const [filterStatus] = useState<AppointmentStatus | 'todos'>('todos');
@@ -216,6 +231,34 @@ function AdminPage() {
     if (!allowed) return;
     return subscribeAllAppointments({ dateMs: filterDateMs, status: filterStatus, onChange: setDayAppointments });
   }, [allowed, filterDateMs, filterStatus]);
+
+  useEffect(() => {
+    if (!allowed) return;
+    const anyWindow = window as any;
+    if (process.env.TARO_ENV === 'h5' && anyWindow?.Notification?.permission === 'default') {
+      requestNotificationPermission();
+    }
+  }, [allowed]);
+
+  useEffect(() => {
+    if (!allowed) return;
+    const unsub = subscribeAdminNotifications((items) => {
+      if (settings.notificationsEnabled && adminNotificationsRef.current.length) {
+        const previousIds = new Set(adminNotificationsRef.current.map((n) => n.id));
+        const newItems = items.filter((n) => !previousIds.has(n.id));
+        if (newItems.length) {
+          const latest = newItems[0];
+          showSystemNotification(latest.title, latest.body, {
+            notificationId: latest.id,
+            url: '/pages/admin/index',
+          });
+        }
+      }
+      adminNotificationsRef.current = items;
+      setAdminNotifications(items);
+    });
+    return unsub;
+  }, [allowed, settings.notificationsEnabled]);
 
   useEffect(() => {
     if (!allowed) return;
@@ -396,7 +439,6 @@ function AdminPage() {
       return (
         (u.fullName || '').toLowerCase().includes(q) ||
         (u.socialName || '').toLowerCase().includes(q) ||
-        (u.phoneE164 || '').toLowerCase().includes(q) ||
         (u.email || '').toLowerCase().includes(q)
       );
     });
@@ -707,42 +749,47 @@ function AdminPage() {
     setServiceEditorOpen(true);
   };
 
-  const handleToggleServiceActive = async (service: ServiceItem) => {
+  const handleSetServiceActive = async (service: ServiceItem, nextActive: boolean) => {
     await runSafe(async () => {
-      await upsertService(service.id, {
-        name: service.name,
-        description: service.description,
-        durationMinutes: service.durationMinutes || 60,
-        priceCents: service.priceCents || 0,
-        active: service.active === false ? true : false,
-        imageUrl: service.imageUrl,
-        sortOrder: service.sortOrder || 1,
-        defaultProfessionalId: service.defaultProfessionalId,
-      });
+      const prev = services;
+      setServices((prevItems) => prevItems.map((s) => (s.id === service.id ? { ...s, active: nextActive } : s)));
+      try {
+        await setServiceActiveDoc(service.id, nextActive);
+      } catch (error) {
+        setServices(prev);
+        throw error;
+      }
       if (currentUser) {
         createAdminLog({
           actor: currentUser,
           action: 'upsert_service',
           entityType: 'service',
           entityId: service.id,
-          summary: `${service.active === false ? 'Ativou' : 'Desativou'} serviço: ${service.name}`,
-          meta: { active: service.active === false ? true : false },
+          summary: `${nextActive ? 'Ativou' : 'Desativou'} serviço: ${service.name}`,
+          meta: { active: nextActive },
         });
       }
-      Taro.showToast({ title: service.active === false ? 'Serviço ativado' : 'Serviço desativado', icon: 'success' });
+      Taro.showToast({ title: nextActive ? 'Serviço ativado' : 'Serviço desativado', icon: 'success' });
     });
   };
   const handleDeleteService = async (service: ServiceItem) => {
     await runSafe(async () => {
-      await deleteService(service.id);
+      const prev = services;
+      setServices((prev) => prev.filter((s) => s.id !== service.id));
+      try {
+        await deleteService(service.id);
+      } catch (error) {
+        setServices(prev);
+        throw error;
+      }
       if (currentUser) {
         createAdminLog({
           actor: currentUser,
           action: 'upsert_service',
           entityType: 'service',
           entityId: service.id,
-          summary: `Serviço desativado: ${service.name}`,
-          meta: { active: false },
+          summary: `Serviço removido: ${service.name}`,
+          meta: { deleted: true },
         });
       }
       Taro.showToast({ title: 'Serviço removido', icon: 'success' });
@@ -1053,7 +1100,6 @@ function AdminPage() {
 
       const data = rows.map((p) => ({
         Cliente: p.userName,
-        Telefone: p.phoneE164,
         Serviço: p.serviceName,
         Profissional: p.professionalName,
         Data: formatDateLabel(p.paidAt),
@@ -1219,6 +1265,9 @@ function AdminPage() {
           <View className={styles.pill}>
             <Text className={styles.pillText}>{currentUser?.email || 'e-mail não informado'}</Text>
           </View>
+          <View className={styles.pill}>
+            <Text className={styles.pillText}>Notificações {adminNotifications.length ? `(${adminNotifications.length})` : ''}</Text>
+          </View>
           <Button className={styles.btnSecondary} onClick={() => Taro.switchTab({ url: '/pages/index/index' })}>
             <Text className={styles.btnSecondaryText}>Voltar</Text>
           </Button>
@@ -1292,6 +1341,26 @@ function AdminPage() {
           </AdminAccordion>
 
           <AdminAccordion
+            title="Notificações"
+            subtitle="Alertas em tempo real de clientes e agendamentos."
+            open={open.notifications}
+            onToggle={() => setOpen((p) => ({ ...p, notifications: !p.notifications }))}
+          >
+            {adminNotifications.length ? (
+              adminNotifications.slice(0, 5).map((n) => (
+                <View key={n.id} className={styles.listItem}>
+                  <Text className={styles.listTitle}>{n.title}</Text>
+                  <Text className={styles.listSub}>{n.body}</Text>
+                </View>
+              ))
+            ) : (
+              <View className={styles.listItem}>
+                <Text className={styles.listSub}>Nenhuma notificação recente.</Text>
+              </View>
+            )}
+          </AdminAccordion>
+
+          <AdminAccordion
             title="Serviços"
             subtitle="Gerencie os serviços oferecidos, defina preços, ordem e disponibilidade."
             open={open.appointments}
@@ -1311,8 +1380,10 @@ function AdminPage() {
               filteredServices
                 .slice()
                 .sort((a, b) => (a.sortOrder ?? 9999) - (b.sortOrder ?? 9999))
-                .map((s) => (
-                  <View key={s.id} className={styles.serviceCard}>
+                .map((s) => {
+                  const isActive = s.active === true;
+                  return (
+                  <View key={s.id} className={classnames(styles.serviceCard, !isActive && styles.serviceCardInactive)}>
                     <View className={styles.serviceCardBody}>
                       <View className={styles.serviceImage}>
                         {s.imageUrl ? <Image src={s.imageUrl} mode="aspectFill" style={{ width: '100%', height: '100%' }} /> : null}
@@ -1324,8 +1395,8 @@ function AdminPage() {
                           <Text className={styles.serviceBadge}>{priceFromCents(s.priceCents || 0)}</Text>
                           <Text className={styles.serviceBadge}>{s.durationMinutes} min</Text>
                           <Text className={styles.serviceBadge}>Ordem {s.sortOrder ?? '-'}</Text>
-                          <Text className={styles.serviceBadge} style={{ color: s.active === false ? 'var(--color-error)' : 'var(--color-primary)' }}>
-                            {s.active === false ? 'Inativo' : 'Ativo'}
+                          <Text className={styles.serviceBadge} style={{ color: isActive ? 'var(--color-primary)' : 'var(--color-error)' }}>
+                            {isActive ? 'Ativo' : 'Inativo'}
                           </Text>
                         </View>
                       </View>
@@ -1334,15 +1405,15 @@ function AdminPage() {
                       <Button className={styles.serviceActionBtn} onClick={() => startEditService(s)}>
                         <Text>Editar</Text>
                       </Button>
-                      <Button className={styles.serviceActionBtn} onClick={() => handleToggleServiceActive(s)}>
-                        <Text>{s.active === false ? 'Ativar' : 'Desativar'}</Text>
-                      </Button>
+                      <View className={styles.serviceToggle} onClick={(e) => e.stopPropagation()}>
+                        <Switch checked={isActive} onChange={(e) => handleSetServiceActive(s, readSwitchValue(e?.detail?.value))} />
+                      </View>
                       <Button className={classnames(styles.serviceActionBtn, styles.serviceActionBtnPrimary)} onClick={() => handleDeleteService(s)}>
                         <Text>Remover</Text>
                       </Button>
                     </View>
                   </View>
-                ))
+                )})
             ) : (
               <View className={styles.listItem}>
                 <Text className={styles.listSub}>Sem serviços cadastrados. Adicione o primeiro serviço para iniciar a agenda.</Text>
@@ -1514,9 +1585,6 @@ function AdminPage() {
                       <Text className={classnames(styles.badgeText, styles.badgePrimaryText)}>{priceFromCents(p.amountCents)}</Text>
                     </View>
                     <View className={styles.badge}>
-                      <Text className={styles.badgeText}>{p.phoneE164}</Text>
-                    </View>
-                    <View className={styles.badge}>
                       <Text className={styles.badgeText}>{p.appointmentStatus}</Text>
                     </View>
                   </View>
@@ -1617,7 +1685,7 @@ function AdminPage() {
                 className={styles.input}
                 value={clientSearch}
                 onInput={(e) => setClientSearch(e.detail.value)}
-                placeholder="Buscar por nome ou telefone"
+                placeholder="Buscar por nome ou e-mail"
               />
             </View>
 
@@ -1625,9 +1693,13 @@ function AdminPage() {
               filteredClients.slice(0, 80).map((u) => (
                   <View key={u.id} className={styles.listItem} onClick={() => openClientEditor(u)}>
                     <Text className={styles.listTitle}>{u.socialName || u.fullName}</Text>
-                    <Text className={styles.listSub}>
-                      {u.phoneE164 || '-'} • {u.email || 'sem e-mail'} • cadastro {u.createdAt ? formatDateLabel(u.createdAt) : '-'}
-                    </Text>
+                    <Text className={styles.listSub}>e-mail: {u.email || 'sem e-mail'}</Text>
+                    <View className={styles.waRow} onClick={(e) => { e.stopPropagation(); if (u.phoneE164) openWhatsAppToPhone(u.phoneE164); }}>
+                      <View className={styles.waIcon}>
+                        <Text className={styles.waIconText}>W</Text>
+                      </View>
+                      <Text className={styles.waValue}>{u.phoneE164 ? formatPhoneBRDisplay(u.phoneE164) : 'telefone não informado'}</Text>
+                    </View>
                     <View className={styles.badgeRow}>
                       {u.vip ? (
                         <View className={classnames(styles.badge, styles.badgePrimary)}>
@@ -1799,9 +1871,6 @@ function AdminPage() {
                 <Text className={classnames(styles.badgeText, styles.badgePrimaryText)}>
                   {statusLabel(appointmentSelected.status, appointmentSelected.onMyWayAt)}
                 </Text>
-              </View>
-              <View className={styles.badge}>
-                <Text className={styles.badgeText}>{appointmentSelected.phoneE164}</Text>
               </View>
               <View className={styles.badge}>
                 <Text className={styles.badgeText}>{priceFromCents(appointmentSelected.priceCents || 0)}</Text>
@@ -2023,7 +2092,7 @@ function AdminPage() {
 
             <Text className={styles.fieldLabel}>Ativo</Text>
             <View className={styles.row} style={{ alignItems: 'center' }}>
-              <Switch checked={serviceActive} onChange={(e) => setServiceActive(Boolean(e.detail.value))} />
+              <Switch checked={serviceActive} onChange={(e) => setServiceActive(readSwitchValue(e?.detail?.value))} />
               <View style={{ width: '16rpx' }} />
               <Text className={styles.listSub}>{serviceActive ? 'Ativado' : 'Desativado'}</Text>
             </View>
@@ -2140,7 +2209,7 @@ function AdminPage() {
         <View className={styles.modalMask} onClick={() => setClientEditorOpen(false)}>
           <View className={styles.modalCard} onClick={(e) => e.stopPropagation()}>
             <Text className={styles.modalTitle}>{clientSelected.socialName || clientSelected.fullName}</Text>
-            <Text className={styles.modalDesc}>{clientSelected.phoneE164 || '-'} • {clientSelected.email || 'sem e-mail'}</Text>
+            <Text className={styles.modalDesc}>{clientSelected.email || 'sem e-mail'}</Text>
 
             <Text className={styles.fieldLabel}>VIP</Text>
             <View className={styles.row}>

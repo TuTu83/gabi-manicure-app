@@ -51,3 +51,30 @@ self.addEventListener('fetch', (event) => {
     }),
   );
 });
+
+self.addEventListener('notificationclick', (event) => {
+  event.notification.close();
+  const data = event.notification.data || {};
+  const appointmentId = data?.appointmentId;
+  let url = data?.url || '/';
+  if (event.action === 'on_my_way') {
+    url = `/?notificationAction=on_my_way&appointmentId=${appointmentId || ''}`;
+  }
+  const openUrl = new URL(url, self.location.origin).href;
+  event.waitUntil(
+    self.clients
+      .matchAll({ type: 'window', includeUncontrolled: true })
+      .then((clientList) => {
+        for (const client of clientList) {
+          if ('focus' in client) {
+            client.focus();
+            return client.navigate ? client.navigate(openUrl) : self.clients.openWindow(openUrl);
+          }
+        }
+        if (self.clients.openWindow) {
+          return self.clients.openWindow(openUrl);
+        }
+        return undefined;
+      }),
+  );
+});

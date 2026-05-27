@@ -50,9 +50,3 @@ export function validatePasswordConfirm(password: string, confirm: string): stri
   if (password !== confirm) return 'As senhas não conferem';
   return null;
 }
-
-export function validateOtp6(value: string): string | null {
-  const digits = (value || '').replace(/\D/g, '');
-  if (digits.length !== 6) return 'Digite o código de 6 dígitos';
-  return null;
-}

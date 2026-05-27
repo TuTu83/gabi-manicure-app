@@ -1,10 +1,9 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { Button, Image, Input, Text, View } from '@tarojs/components';
 import Taro from '@tarojs/taro';
-import { loginWithIdentifier, signInWithGoogleH5, updateUserPhone } from '@/services/authService';
+import { loginWithIdentifier, signInWithGoogleH5 } from '@/services/authService';
 import { useAppStore } from '@/store/appStore';
-import { formatPhoneBRDisplay, getFirstName, validatePhoneBR } from '@/utils/validators';
-import type { UserProfile } from '@/types/user';
+import { getFirstName } from '@/utils/validators';
 import styles from './index.module.scss';
 
 function LoginPage() {
@@ -19,11 +18,6 @@ function LoginPage() {
   const [loading, setLoading] = useState(false);
   const [heroFailed, setHeroFailed] = useState(false);
   const [heroLoaded, setHeroLoaded] = useState(false);
-
-  const [googleUser, setGoogleUser] = useState<UserProfile | null>(null);
-  const [phoneForGoogle, setPhoneForGoogle] = useState('');
-  const [googleError, setGoogleError] = useState<string | null>(null);
-  const needsPhone = useMemo(() => Boolean(googleUser && !googleUser.phoneE164), [googleUser]);
   const heroImageUrl =
     'https://images.unsplash.com/photo-1616394584738-fc6e612e71b5?auto=format&fit=crop&w=1200&q=70';
 
@@ -49,44 +43,15 @@ function LoginPage() {
 
   const handleGoogle = async () => {
     setErrorText(null);
-    setGoogleError(null);
     setLoading(true);
     try {
       const profile = await signInWithGoogleH5();
-      if (!profile.phoneE164) {
-        setGoogleUser(profile);
-        return;
-      }
       setCurrentUser(profile);
       const firstName = getFirstName(profile.socialName || profile.fullName);
       Taro.showToast({ title: `Olá, ${firstName} 👋`, icon: 'none' });
       Taro.switchTab({ url: '/pages/index/index' });
     } catch (error: any) {
       setErrorText(error?.message || 'Não foi possível entrar com Google');
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const handleSaveGooglePhone = async () => {
-    if (!googleUser) return;
-    setGoogleError(null);
-    const phoneErr = validatePhoneBR(phoneForGoogle);
-    if (phoneErr) {
-      setGoogleError(phoneErr);
-      return;
-    }
-    setLoading(true);
-    try {
-      const updated = await updateUserPhone(googleUser.id, phoneForGoogle);
-      setCurrentUser(updated);
-      const firstName = getFirstName(updated.socialName || updated.fullName);
-      Taro.showToast({ title: `Olá, ${firstName} 👋`, icon: 'none' });
-      setGoogleUser(null);
-      setPhoneForGoogle('');
-      Taro.switchTab({ url: '/pages/index/index' });
-    } catch (error: any) {
-      setGoogleError(error?.message || 'Não foi possível salvar o telefone');
     } finally {
       setLoading(false);
     }
@@ -162,34 +127,7 @@ function LoginPage() {
             Criar conta
           </Text>
         </View>
-
-        <View className={styles.divider} />
-        <Text className={styles.subtitle}>Dica: no modo de testes, o código é mostrado na tela de verificação.</Text>
       </View>
-
-      {needsPhone ? (
-        <View className={styles.modalMask} onClick={() => setGoogleUser(null)}>
-          <View className={styles.modalCard} onClick={(e) => e.stopPropagation()}>
-            <Text className={styles.modalTitle}>Complete seu cadastro</Text>
-            <Text className={styles.modalDesc}>Para continuar, informe seu celular com DDD.</Text>
-            <Text className={styles.fieldLabel}>Telefone com DDD</Text>
-            <View className={styles.inputRow}>
-              <Input
-                className={styles.input}
-                value={phoneForGoogle}
-                type="text"
-                maxlength={20}
-                onInput={(e) => setPhoneForGoogle(formatPhoneBRDisplay(e.detail.value))}
-                placeholder="Ex.: (11) 999999999"
-              />
-            </View>
-            {googleError ? <Text className={styles.errorText}>{googleError}</Text> : null}
-            <Button className={styles.primaryBtn} loading={loading} onClick={handleSaveGooglePhone}>
-              <Text className={styles.primaryBtnText}>Salvar e continuar</Text>
-            </Button>
-          </View>
-        </View>
-      ) : null}
     </View>
   );
 }

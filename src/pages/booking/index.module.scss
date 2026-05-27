@@ -239,6 +239,10 @@
 
 .paymentCard {
   @include button-reset;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8rpx;
   width: 100%;
   min-width: 160rpx;
   border-radius: $radius-xl;
@@ -255,13 +259,15 @@
 }
 
 .paymentTitle {
+  display: block;
   font-size: 28rpx;
   font-weight: $font-weight-semibold;
   color: var(--color-text-primary);
-  margin-bottom: 8rpx;
+  margin-bottom: 0;
 }
 
 .paymentSubtitle {
+  display: block;
   font-size: 22rpx;
   color: var(--color-text-tertiary);
 }

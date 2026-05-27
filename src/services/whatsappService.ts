@@ -5,11 +5,10 @@ function digitsOnly(value: string): string {
   return (value || '').replace(/\D/g, '');
 }
 
-export async function openAdminWhatsApp(): Promise<void> {
-  const phoneE164 = getLocalSettings().adminWhatsAppE164;
+export async function openWhatsAppToPhone(phoneE164: string): Promise<void> {
   const digits = digitsOnly(phoneE164);
   if (!digits) {
-    Taro.showToast({ title: 'WhatsApp não configurado', icon: 'none' });
+    Taro.showToast({ title: 'Telefone não disponível', icon: 'none' });
     return;
   }
 
@@ -25,4 +24,14 @@ export async function openAdminWhatsApp(): Promise<void> {
     console.error('[WhatsApp] falha ao abrir', error);
     Taro.showToast({ title: 'Não foi possível abrir o WhatsApp', icon: 'none' });
   }
+}
+
+export async function openAdminWhatsApp(): Promise<void> {
+  const phoneE164 = getLocalSettings().adminWhatsAppE164;
+  if (!digitsOnly(phoneE164)) {
+    Taro.showToast({ title: 'WhatsApp não configurado', icon: 'none' });
+    return;
+  }
+
+  await openWhatsAppToPhone(phoneE164);
 }

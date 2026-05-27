@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import Taro from '@tarojs/taro';
 import { useAppStore } from '@/store/appStore';
-import { getAdminEmails } from '@/services/adminService';
+import { isAdminUser } from '@/services/adminService';
 
 export function useAdminGuard() {
   const currentUser = useAppStore((s) => s.currentUser);
@@ -22,10 +22,6 @@ export function useAdminGuard() {
         }
 
         const email = (currentUser.email || '').trim().toLowerCase();
-        if (currentUser.role === 'admin') {
-          if (!cancelled) setAllowed(true);
-          return;
-        }
         if (!email) {
           if (!cancelled) {
             setAllowed(false);
@@ -35,8 +31,7 @@ export function useAdminGuard() {
           return;
         }
 
-        const allow = await getAdminEmails();
-        const ok = allow.includes(email);
+        const ok = await isAdminUser(currentUser);
         if (!cancelled) {
           setAllowed(ok);
           if (!ok) {

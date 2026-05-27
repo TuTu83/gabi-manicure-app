@@ -3,6 +3,7 @@ import { View } from '@tarojs/components';
 import Taro, { useDidShow, useDidHide } from '@tarojs/taro';
 import classnames from 'classnames';
 import { useAppStore } from '@/store/appStore';
+import { isAdminUser } from '@/services/adminService';
 import { subscribeAppSettings } from '@/services/settingsService';
 // Estilos globais
 import './app.scss';
@@ -11,6 +12,7 @@ function App(props: { children: React.ReactNode }) {
   // Pode usar todos os React Hooks
   const setSettings = useAppStore((s) => s.setSettings);
   const settings = useAppStore((s) => s.settings);
+  const currentUser = useAppStore((s) => s.currentUser);
   const installPromptRef = useRef<any>(null);
   const isInstalledRef = useRef(false);
   const promptingRef = useRef(false);
@@ -68,6 +70,51 @@ function App(props: { children: React.ReactNode }) {
       window.removeEventListener('appinstalled', onAppInstalled as any);
     };
   }, []);
+
+  useEffect(() => {
+    const isBrowser = typeof window !== 'undefined' && typeof document !== 'undefined';
+    if (!isBrowser) return;
+    if (process.env.TARO_ENV !== 'h5') return;
+
+    let cancelled = false;
+    const run = async () => {
+      const ok = await isAdminUser(currentUser || null);
+      if (cancelled) return;
+
+      const applyVisibility = (): boolean => {
+        const root =
+          (document.querySelector('.taro-tabbar__tabbar') as HTMLElement | null) ||
+          (document.querySelector('.taro-tabbar__container') as HTMLElement | null) ||
+          (document.querySelector('.taro-tabbar') as HTMLElement | null);
+        if (!root) return false;
+
+        const items = Array.from(
+          root.querySelectorAll('a, .taro-tabbar__item, .taro-tabbar__tabbar-item, .weui-tabbar__item'),
+        ) as HTMLElement[];
+        if (!items.length) return false;
+
+        items.forEach((el) => {
+          const text = String(el.textContent || '').trim().toLowerCase();
+          const href = String((el as any).href || '');
+          const isAdminItem = text === 'admin' || href.includes('/pages/admin/index') || href.includes('pages/admin/index');
+          if (isAdminItem) el.style.display = ok ? '' : 'none';
+        });
+        return true;
+      };
+
+      if (applyVisibility()) return;
+      for (let i = 0; i < 15; i += 1) {
+        if (cancelled) return;
+        await new Promise((r) => setTimeout(r, 200));
+        if (applyVisibility()) return;
+      }
+    };
+
+    run();
+    return () => {
+      cancelled = true;
+    };
+  }, [currentUser?.email, currentUser?.id]);
 
   // Equivalente ao onShow
   useDidShow(() => {

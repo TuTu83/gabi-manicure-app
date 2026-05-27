@@ -102,10 +102,6 @@ function ProfilePage() {
           <Text className={styles.value}>{currentUser?.socialName || currentUser?.fullName || '-'}</Text>
         </View>
         <View className={styles.row}>
-          <Text className={styles.label}>Telefone</Text>
-          <Text className={styles.value}>{currentUser?.phoneE164 || '-'}</Text>
-        </View>
-        <View className={styles.row}>
           <Text className={styles.label}>Gmail</Text>
           <Text className={styles.value}>{currentUser?.email || '-'}</Text>
         </View>
