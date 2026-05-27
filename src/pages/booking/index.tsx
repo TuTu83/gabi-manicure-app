@@ -26,6 +26,7 @@ import {
 import { createNotification, maybeSendAppointmentReminder, requestNotificationPermission } from '@/services/notificationService';
 import { useAppStore } from '@/store/appStore';
 import type { Appointment, AppointmentStatus, Professional, ServiceItem } from '@/types/booking';
+import type { PaymentMethod } from '@/types/finance';
 import styles from './index.module.scss';
 
 function BookingPage() {
@@ -38,11 +39,12 @@ function BookingPage() {
   const [professionals, setProfessionals] = useState<Professional[]>([]);
   const [appointments, setAppointments] = useState<Appointment[]>([]);
 
-  const [selectedServiceId, setSelectedServiceId] = useState<string>('');
+  const [selectedServiceIds, setSelectedServiceIds] = useState<string[]>([]);
   const [selectedProfessionalId, setSelectedProfessionalId] = useState<string>('');
   const [selectedDateMs, setSelectedDateMs] = useState<number>(() => Date.now());
   const [selectedSlotStartAt, setSelectedSlotStartAt] = useState<number | null>(null);
   const [bookingNotes, setBookingNotes] = useState('');
+  const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>('pix');
 
   const [busy, setBusy] = useState<Array<{ startAt: number; endAt: number; status: AppointmentStatus }>>([]);
   const [loading, setLoading] = useState(false);
@@ -56,28 +58,35 @@ function BookingPage() {
   const [reviewRating, setReviewRating] = useState(0);
   const [reviewComment, setReviewComment] = useState('');
 
-  const selectedService = useMemo(
-    () => services.find((s) => s.id === selectedServiceId) || null,
-    [services, selectedServiceId],
-  );
+  const selectedServices = useMemo(() => {
+    const set = new Set(selectedServiceIds);
+    return services.filter((s) => set.has(s.id));
+  }, [services, selectedServiceIds]);
+  const selectedService = useMemo(() => selectedServices[0] || null, [selectedServices]);
   const selectedProfessional = useMemo(
     () => professionals.find((p) => p.id === selectedProfessionalId) || null,
     [professionals, selectedProfessionalId],
   );
+  const totalDurationMinutes = useMemo(
+    () => selectedServices.reduce((sum, s) => sum + (s.durationMinutes || 0), 0),
+    [selectedServices],
+  );
+  const totalPriceCents = useMemo(() => selectedServices.reduce((sum, s) => sum + (s.priceCents || 0), 0), [selectedServices]);
+  const combinedServiceName = useMemo(() => selectedServices.map((s) => s.name).join(' + '), [selectedServices]);
 
   const userId = currentUser?.id || '';
 
   const upcoming = useMemo(() => {
     const now = Date.now();
     return appointments
-      .filter((a) => a.startAt >= now && a.status !== 'cancelado')
+      .filter((a) => a.startAt >= now && a.status !== 'cancelado' && a.status !== 'recusado')
       .sort((a, b) => a.startAt - b.startAt);
   }, [appointments]);
 
   const history = useMemo(() => {
     const now = Date.now();
     return appointments
-      .filter((a) => a.startAt < now || a.status === 'cancelado' || a.status === 'concluido')
+      .filter((a) => a.startAt < now || a.status === 'cancelado' || a.status === 'recusado' || a.status === 'concluido')
       .sort((a, b) => b.startAt - a.startAt);
   }, [appointments]);
 
@@ -87,10 +96,10 @@ function BookingPage() {
     if (!selectedService || !selectedProfessional) return [];
     return buildSlotsForDay({
       dateMs: selectedDateMs,
-      durationMinutes: selectedService.durationMinutes,
+      durationMinutes: totalDurationMinutes || selectedService.durationMinutes,
       busy,
     });
-  }, [busy, selectedDateMs, selectedProfessional, selectedService]);
+  }, [busy, selectedDateMs, selectedProfessional, selectedService, totalDurationMinutes]);
 
   useEffect(() => {
     if (!currentUser) {
@@ -108,7 +117,7 @@ function BookingPage() {
         if (!mounted) return;
         setServices(s);
         setProfessionals(p);
-        if (!selectedServiceId && s.length) setSelectedServiceId(s[0].id);
+        if (!selectedServiceIds.length && s.length) setSelectedServiceIds([s[0].id]);
         if (!selectedProfessionalId && p.length) setSelectedProfessionalId(p[0].id);
       } catch (error: any) {
         setErrorText(error?.message || 'Não foi possível carregar o catálogo');
@@ -144,6 +153,7 @@ function BookingPage() {
   const resetBooking = () => {
     setSelectedSlotStartAt(null);
     setBookingNotes('');
+    setPaymentMethod('pix');
   };
 
   const handleConfirmBooking = async () => {
@@ -152,7 +162,7 @@ function BookingPage() {
       setErrorText('Sua conta está bloqueada. Fale com a administradora.');
       return;
     }
-    if (!selectedService || !selectedProfessional) return;
+    if (!selectedServices.length || !selectedProfessional) return;
     if (!selectedSlotStartAt) {
       setErrorText('Selecione um horário');
       return;
@@ -163,15 +173,24 @@ function BookingPage() {
     try {
       await requestNotificationPermission();
       const startAt = selectedSlotStartAt;
-      const endAt = startAt + selectedService.durationMinutes * 60 * 1000;
+      const duration = Math.max(0, totalDurationMinutes || 0);
+      if (duration <= 0) throw new Error('Selecione ao menos 1 serviço');
+      const endAt = startAt + duration * 60 * 1000;
+      const serviceNames = selectedServices.map((s) => s.name);
       const appointment = await createAppointment({
         userId: currentUser.id,
         userName: currentUser.socialName || currentUser.fullName,
         phoneE164: currentUser.phoneE164,
-        serviceId: selectedService.id,
-        serviceName: selectedService.name,
-        durationMinutes: selectedService.durationMinutes,
-        priceCents: selectedService.priceCents,
+        serviceId: selectedServices[0].id,
+        serviceName: combinedServiceName || selectedServices[0].name,
+        serviceIds: selectedServices.map((s) => s.id),
+        serviceNames,
+        servicesCount: selectedServices.length,
+        durationMinutes: duration,
+        totalDurationMinutes: duration,
+        priceCents: totalPriceCents,
+        totalPriceCents,
+        paymentMethod,
         professionalId: selectedProfessional.id,
         professionalName: selectedProfessional.name,
         startAt,
@@ -179,27 +198,15 @@ function BookingPage() {
         notes: bookingNotes.trim() || undefined,
       });
 
-      await Promise.all([
-        createNotification({
-          target: 'admin',
-          type: 'confirmacao_agendamento',
-          title: 'Novo agendamento',
-          body: `${appointment.userName} solicitou ${appointment.serviceName} em ${formatDateLabel(appointment.startAt)} às ${formatTime(
-            appointment.startAt,
-          )}.`,
-          appointmentId: appointment.id,
-        }),
-        createNotification({
-          target: 'cliente',
-          targetUserId: currentUser.id,
-          type: 'confirmacao_agendamento',
-          title: 'Agendamento solicitado',
-          body: `Recebemos seu pedido para ${appointment.serviceName} em ${formatDateLabel(appointment.startAt)} às ${formatTime(
-            appointment.startAt,
-          )}.`,
-          appointmentId: appointment.id,
-        }),
-      ]);
+      await createNotification({
+        target: 'admin',
+        type: 'confirmacao_agendamento',
+        title: 'Novo agendamento',
+        body: `${appointment.userName} solicitou: ${appointment.serviceName} • Total ${priceFromCents(
+          appointment.priceCents || 0,
+        )} • ${paymentMethod.toUpperCase()} • ${formatDateLabel(appointment.startAt)} às ${formatTime(appointment.startAt)}.`,
+        appointmentId: appointment.id,
+      });
 
       Taro.showToast({ title: 'Agendamento criado', icon: 'success' });
       resetBooking();
@@ -275,7 +282,7 @@ function BookingPage() {
 
   const handleOpenReschedule = () => {
     if (!selectedAppointment) return;
-    setSelectedServiceId(selectedAppointment.serviceId);
+    setSelectedServiceIds(selectedAppointment.serviceIds?.length ? selectedAppointment.serviceIds : [selectedAppointment.serviceId]);
     setSelectedProfessionalId(selectedAppointment.professionalId);
     setSelectedDateMs(selectedAppointment.startAt);
     setSelectedSlotStartAt(null);
@@ -283,7 +290,7 @@ function BookingPage() {
   };
 
   const handleConfirmReschedule = async () => {
-    if (!selectedAppointment || !selectedService || !selectedProfessional) return;
+    if (!selectedAppointment || !selectedProfessional) return;
     if (!selectedSlotStartAt) {
       setErrorText('Selecione um horário');
       return;
@@ -292,7 +299,7 @@ function BookingPage() {
     setErrorText(null);
     try {
       const startAt = selectedSlotStartAt;
-      const endAt = startAt + selectedService.durationMinutes * 60 * 1000;
+      const endAt = startAt + selectedAppointment.durationMinutes * 60 * 1000;
       await rescheduleAppointment({
         appointmentId: selectedAppointment.id,
         professionalId: selectedProfessional.id,
@@ -393,7 +400,7 @@ function BookingPage() {
           <Text className={styles.brandName}>{appName}</Text>
         </View>
         <Text className={styles.title}>Agendamentos</Text>
-        <Text className={styles.desc}>Escolha um serviço, selecione o horário e confirme com segurança.</Text>
+        <Text className={styles.desc}>Escolha um ou mais serviços, selecione o horário e confirme com segurança.</Text>
 
         <View className={styles.tabs}>
           <Button className={classnames(styles.tabBtn, tab === 'agendar' && styles.tabBtnActive)} onClick={() => setTab('agendar')}>
@@ -422,16 +429,20 @@ function BookingPage() {
 
         {tab === 'agendar' ? (
           <>
-            <SectionHeader title="1) Serviço" />
+            <SectionHeader title="1) Serviços" />
             <View className={styles.grid}>
               {services.map((s) => {
-                const active = s.id === selectedServiceId;
+                const active = selectedServiceIds.includes(s.id);
                 return (
                   <View
                     key={s.id}
                     className={classnames(styles.serviceItem, active && styles.serviceItemActive)}
                     onClick={() => {
-                      setSelectedServiceId(s.id);
+                      setSelectedServiceIds((prev) => {
+                        const has = prev.includes(s.id);
+                        const next = has ? prev.filter((id) => id !== s.id) : [...prev, s.id];
+                        return next;
+                      });
                       if (s.defaultProfessionalId && professionals.some((p) => p.id === s.defaultProfessionalId)) {
                         setSelectedProfessionalId(s.defaultProfessionalId);
                       }
@@ -513,7 +524,7 @@ function BookingPage() {
                   })}
                 </View>
               ) : (
-                <Text className={styles.desc}>Selecione serviço e profissional para ver os horários.</Text>
+                <Text className={styles.desc}>Selecione serviço(s) e profissional para ver os horários.</Text>
               )}
             </AppCard>
 
@@ -522,7 +533,7 @@ function BookingPage() {
               <View className={styles.pickRow}>
                 <Text className={styles.pickLabel}>Resumo</Text>
                 <Text className={styles.pickValue}>
-                  {selectedService?.name || '-'} • {selectedProfessional?.name || '-'}
+                  {combinedServiceName || '-'} • {selectedProfessional?.name || '-'}
                 </Text>
               </View>
               <View style={{ height: '16rpx' }} />
@@ -532,6 +543,38 @@ function BookingPage() {
                   {formatDateLabel(selectedDateMs)}
                   {selectedSlotStartAt ? ` às ${formatTime(selectedSlotStartAt)}` : ''}
                 </Text>
+              </View>
+              <View style={{ height: '16rpx' }} />
+              <View className={styles.pickRow}>
+                <Text className={styles.pickLabel}>Total</Text>
+                <Text className={styles.pickValue}>
+                  {priceFromCents(totalPriceCents)} • {totalDurationMinutes} min
+                </Text>
+              </View>
+              <View style={{ height: '16rpx' }} />
+              <View className={styles.pickRow}>
+                <Text className={styles.pickLabel}>Pagamento</Text>
+                <Picker
+                  mode="selector"
+                  range={['PIX', 'Dinheiro', 'Cartão (Crédito)', 'Cartão (Débito)', 'Outro']}
+                  onChange={(e) => {
+                    const idx = Number(e.detail.value);
+                    const value = (['pix', 'dinheiro', 'credito', 'debito', 'outro'][idx] || 'pix') as PaymentMethod;
+                    setPaymentMethod(value);
+                  }}
+                >
+                  <Text className={styles.pickValue}>
+                    {paymentMethod === 'pix'
+                      ? 'PIX'
+                      : paymentMethod === 'dinheiro'
+                        ? 'Dinheiro'
+                        : paymentMethod === 'credito'
+                          ? 'Cartão (Crédito)'
+                          : paymentMethod === 'debito'
+                            ? 'Cartão (Débito)'
+                            : 'Outro'}
+                  </Text>
+                </Picker>
               </View>
               <View style={{ height: '16rpx' }} />
               <Text className={styles.fieldLabel}>Observações (opcional)</Text>
@@ -551,6 +594,7 @@ function BookingPage() {
                 className={styles.secondaryBtn}
                 onClick={() => {
                   resetBooking();
+                  if (services.length) setSelectedServiceIds([services[0].id]);
                   setErrorText(null);
                 }}
               >
@@ -655,17 +699,18 @@ function BookingPage() {
                 setDetailOpen(false);
                 setTab('agendar');
                 if (selectedAppointment) {
-                  setSelectedServiceId(selectedAppointment.serviceId);
+                  setSelectedServiceIds(selectedAppointment.serviceIds?.length ? selectedAppointment.serviceIds : [selectedAppointment.serviceId]);
                   setSelectedProfessionalId(selectedAppointment.professionalId);
                   setSelectedDateMs(selectedAppointment.startAt);
                   setSelectedSlotStartAt(null);
+                  if (selectedAppointment.paymentMethod) setPaymentMethod(selectedAppointment.paymentMethod);
                 }
               }}
             >
               <Text className={styles.primaryBtnText}>Agendar novamente</Text>
             </Button>
 
-            {selectedAppointment.status !== 'cancelado' && selectedAppointment.startAt > Date.now() ? (
+            {selectedAppointment.status !== 'cancelado' && selectedAppointment.status !== 'recusado' && selectedAppointment.startAt > Date.now() ? (
               <>
                 <Button className={styles.secondaryBtn} onClick={handleOpenReschedule}>
                   <Text className={styles.secondaryBtnText}>Reagendar</Text>

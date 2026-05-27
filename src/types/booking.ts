@@ -1,4 +1,6 @@
-export type AppointmentStatus = 'pendente' | 'confirmado' | 'cancelado' | 'concluido';
+import type { PaymentMethod } from '@/types/finance';
+
+export type AppointmentStatus = 'pendente' | 'confirmado' | 'cancelado' | 'recusado' | 'concluido';
 
 export interface ServiceItem {
   id: string;
@@ -39,8 +41,14 @@ export interface Appointment {
 
   serviceId: string;
   serviceName: string;
+  serviceIds?: string[];
+  serviceNames?: string[];
+  servicesCount?: number;
   durationMinutes: number;
+  totalDurationMinutes?: number;
   priceCents?: number;
+  totalPriceCents?: number;
+  paymentMethod?: PaymentMethod;
   professionalId: string;
   professionalName: string;
 
@@ -54,6 +62,7 @@ export interface Appointment {
   notes?: string;
   onMyWayAt?: number;
   canceledAt?: number;
+  refusedAt?: number;
   completedAt?: number;
 }
 

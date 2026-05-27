@@ -1,4 +1,4 @@
-export type PaymentMethod = 'pix' | 'dinheiro' | 'credito' | 'debito';
+export type PaymentMethod = 'pix' | 'dinheiro' | 'credito' | 'debito' | 'outro';
 
 export interface PaymentRecord {
   id: string;

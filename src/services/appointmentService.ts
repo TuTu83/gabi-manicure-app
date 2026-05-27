@@ -94,7 +94,9 @@ export function buildSlotsForDay(params: {
     const endAt = cursor + durationMinutes * 60 * 1000;
 
     const isPast = endAt <= now;
-    const hasConflict = busy.some((b) => b.status !== 'cancelado' && overlaps(startAt, endAt, b.startAt, b.endAt));
+    const hasConflict = busy.some(
+      (b) => b.status !== 'cancelado' && b.status !== 'recusado' && overlaps(startAt, endAt, b.startAt, b.endAt),
+    );
 
     if (isPast) {
       slots.push({ startAt, endAt, disabled: true, reason: 'Horário passado' });
@@ -212,6 +214,7 @@ export async function createAppointment(input: Omit<Appointment, 'id' | 'created
       (a) =>
         a.professionalId === input.professionalId &&
         a.status !== 'cancelado' &&
+        a.status !== 'recusado' &&
         overlaps(startAt, endAt, a.startAt, a.endAt),
     );
     if (hasConflict) throw new Error('Este horário acabou de ser ocupado. Escolha outro horário.');
@@ -236,7 +239,7 @@ export async function createAppointment(input: Omit<Appointment, 'id' | 'created
     const snapUser = await getDocs(qUser);
     const tooSoon = snapUser.docs.some((d) => {
       const a = d.data() as Appointment;
-      return (a.createdAt || 0) >= threshold && a.status !== 'cancelado';
+      return (a.createdAt || 0) >= threshold && a.status !== 'cancelado' && a.status !== 'recusado';
     });
     if (tooSoon) throw new Error('Você acabou de solicitar um agendamento. Aguarde alguns segundos e tente novamente.');
   } catch (error: any) {
@@ -256,7 +259,7 @@ export async function createAppointment(input: Omit<Appointment, 'id' | 'created
 
     const conflicts = snap.docs.some((d) => {
       const data = d.data() as Appointment;
-      if (data.status === 'cancelado') return false;
+    if (data.status === 'cancelado' || data.status === 'recusado') return false;
       return overlaps(startAt, endAt, data.startAt, data.endAt);
     });
     if (conflicts) throw new Error('Este horário acabou de ser ocupado. Escolha outro horário.');
@@ -417,6 +420,7 @@ export async function rescheduleAppointment(params: {
         a.id !== appointmentId &&
         a.professionalId === professionalId &&
         a.status !== 'cancelado' &&
+        a.status !== 'recusado' &&
         overlaps(startAt, endAt, a.startAt, a.endAt),
     );
     if (hasConflict) throw new Error('Este horário acabou de ser ocupado. Escolha outro horário.');
@@ -450,7 +454,7 @@ export async function rescheduleAppointment(params: {
     const conflicts = snap.docs.some((d) => {
       if (d.id === appointmentId) return false;
       const data = d.data() as Appointment;
-      if (data.status === 'cancelado') return false;
+      if (data.status === 'cancelado' || data.status === 'recusado') return false;
       return overlaps(startAt, endAt, data.startAt, data.endAt);
     });
     if (conflicts) throw new Error('Este horário acabou de ser ocupado. Escolha outro horário.');

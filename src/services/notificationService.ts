@@ -157,7 +157,7 @@ export async function maybeSendAppointmentReminder(userId: string, appointments:
   const now = Date.now();
   const reminderMinutes = Math.max(5, getLocalSettings().reminderMinutes || 120);
   const target = appointments
-    .filter((a) => a.userId === userId && a.status !== 'cancelado' && a.startAt > now)
+    .filter((a) => a.userId === userId && a.status !== 'cancelado' && a.status !== 'recusado' && a.startAt > now)
     .sort((a, b) => a.startAt - b.startAt)[0];
 
   if (!target) return;

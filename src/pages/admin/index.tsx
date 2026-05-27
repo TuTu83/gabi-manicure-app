@@ -407,7 +407,7 @@ function AdminPage() {
     const cancelMes = monthAppointments.filter((a) => a.status === 'cancelado').length;
 
     const proximos = monthAppointments
-      .filter((a) => a.startAt >= now && a.status !== 'cancelado')
+      .filter((a) => a.startAt >= now && a.status !== 'cancelado' && a.status !== 'recusado')
       .sort((a, b) => a.startAt - b.startAt)
       .slice(0, 5);
 
@@ -487,11 +487,36 @@ function AdminPage() {
     });
   };
 
+  const handleReject = async () => {
+    if (!appointmentSelected || !currentUser) return;
+    await runSafe(async () => {
+      await setAppointmentStatus(appointmentSelected.id, 'recusado');
+      await createNotification({
+        target: 'cliente',
+        targetUserId: appointmentSelected.userId,
+        type: 'alteracao_agendamento',
+        title: 'Agendamento recusado',
+        body: `Seu agendamento de ${appointmentSelected.serviceName} foi recusado. Se precisar, escolha outro horário pelo app.`,
+        appointmentId: appointmentSelected.id,
+      });
+      createAdminLog({
+        actor: currentUser,
+        action: 'reject_appointment',
+        entityType: 'appointment',
+        entityId: appointmentSelected.id,
+        summary: `Agendamento recusado: ${appointmentSelected.userName}`,
+        meta: { status: 'recusado' },
+      });
+      Taro.showToast({ title: 'Recusado', icon: 'success' });
+      setAppointmentModalOpen(false);
+    });
+  };
+
   const handleOpenPaymentFinalize = () => {
     if (!appointmentSelected) return;
     const cents = appointmentSelected.priceCents || 0;
     setPaymentAmount(String(Math.round(cents / 100) || 0));
-    setPaymentMethod('pix');
+    setPaymentMethod(appointmentSelected.paymentMethod || 'pix');
     setPaymentOpen(true);
   };
 
@@ -584,7 +609,10 @@ function AdminPage() {
     const professionalId = appointmentSelected.professionalId;
 
     const busyRanges = dayAppointments
-      .filter((a) => a.professionalId === professionalId && a.id !== appointmentSelected.id && a.status !== 'cancelado')
+      .filter(
+        (a) =>
+          a.professionalId === professionalId && a.id !== appointmentSelected.id && a.status !== 'cancelado' && a.status !== 'recusado',
+      )
       .map((a) => ({ startAt: a.startAt, endAt: a.endAt, status: a.status }));
 
     return buildSlotsForDay({ dateMs: rescheduleDateMs, durationMinutes, busy: busyRanges });
@@ -925,7 +953,13 @@ function AdminPage() {
     if (method === 'pix') return 'PIX';
     if (method === 'dinheiro') return 'dinheiro';
     if (method === 'credito') return 'cartão crédito';
-    return 'cartão débito';
+    if (method === 'debito') return 'cartão débito';
+    return 'outro';
+  }
+
+  function paymentMethodShortLabel(method?: PaymentMethod): string {
+    if (!method) return '-';
+    return paymentMethodLabel(method);
   }
 
   const handleLoadMorePayments = async () => {
@@ -1310,10 +1344,10 @@ function AdminPage() {
 
               <Picker
                 mode="selector"
-                range={['todos', 'pendente', 'confirmado', 'cancelado', 'concluido']}
+                range={['todos', 'pendente', 'confirmado', 'cancelado', 'recusado', 'concluido']}
                 onChange={(e) => {
                   const idx = Number(e.detail.value);
-                  const value = (['todos', 'pendente', 'confirmado', 'cancelado', 'concluido'][idx] || 'todos') as any;
+                  const value = (['todos', 'pendente', 'confirmado', 'cancelado', 'recusado', 'concluido'][idx] || 'todos') as any;
                   setFilterStatus(value);
                 }}
               >
@@ -1328,7 +1362,7 @@ function AdminPage() {
                 <View key={a.id} className={styles.listItem} onClick={() => openAppointment(a)}>
                   <Text className={styles.listTitle}>{a.userName}</Text>
                   <Text className={styles.listSub}>
-                    {a.serviceName} • {formatTime(a.startAt)} • {a.professionalName}
+                    {a.serviceName} • {formatTime(a.startAt)} • {a.professionalName} • {paymentMethodShortLabel(a.paymentMethod)}
                   </Text>
                   <View className={styles.badgeRow}>
                     <View className={classnames(styles.badge, styles.badgePrimary)}>
@@ -1815,6 +1849,31 @@ function AdminPage() {
               <View className={styles.badge}>
                 <Text className={styles.badgeText}>{priceFromCents(appointmentSelected.priceCents || 0)}</Text>
               </View>
+              <View className={styles.badge}>
+                <Text className={styles.badgeText}>{paymentMethodShortLabel(appointmentSelected.paymentMethod)}</Text>
+              </View>
+              <View className={styles.badge}>
+                <Text className={styles.badgeText}>{appointmentSelected.totalDurationMinutes || appointmentSelected.durationMinutes} min</Text>
+              </View>
+            </View>
+
+            <Text className={styles.fieldLabel}>Serviços</Text>
+            <View className={styles.listItem} style={{ marginTop: 0 }}>
+              <Text className={styles.listSub}>
+                {(appointmentSelected.serviceNames && appointmentSelected.serviceNames.length
+                  ? appointmentSelected.serviceNames
+                  : [appointmentSelected.serviceName]
+                ).join(' • ')}
+              </Text>
+              <View className={styles.badgeRow} style={{ marginTop: '12rpx' }}>
+                <View className={styles.badge}>
+                  <Text className={styles.badgeText}>
+                    {appointmentSelected.servicesCount ||
+                      (appointmentSelected.serviceNames?.length ? appointmentSelected.serviceNames.length : 1)}{' '}
+                    serviço(s)
+                  </Text>
+                </View>
+              </View>
             </View>
 
             <Text className={styles.fieldLabel}>Observações</Text>
@@ -1825,9 +1884,16 @@ function AdminPage() {
               <Button className={styles.modalBtn} disabled={busy} onClick={handleSaveNotes}>
                 <Text className={styles.modalBtnText}>Salvar obs.</Text>
               </Button>
-              <Button className={classnames(styles.modalBtn, styles.modalBtnPrimary)} disabled={busy} onClick={handleApprove}>
-                <Text className={styles.modalBtnTextWhite}>Aprovar</Text>
-              </Button>
+              {appointmentSelected.status === 'pendente' ? (
+                <>
+                  <Button className={styles.modalBtn} disabled={busy} onClick={handleReject}>
+                    <Text className={classnames(styles.modalBtnText, styles.dangerText)}>Recusar</Text>
+                  </Button>
+                  <Button className={classnames(styles.modalBtn, styles.modalBtnPrimary)} disabled={busy} onClick={handleApprove}>
+                    <Text className={styles.modalBtnTextWhite}>Aprovar</Text>
+                  </Button>
+                </>
+              ) : null}
             </View>
 
             <View className={styles.modalActions}>
@@ -1947,6 +2013,9 @@ function AdminPage() {
               </Button>
               <Button className={styles.btnSecondary} onClick={() => setPaymentMethod('debito')}>
                 <Text className={styles.btnSecondaryText}>Débito</Text>
+              </Button>
+              <Button className={styles.btnSecondary} onClick={() => setPaymentMethod('outro')}>
+                <Text className={styles.btnSecondaryText}>Outro</Text>
               </Button>
             </View>
 
