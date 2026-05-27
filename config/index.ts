@@ -1,5 +1,6 @@
 import type { UserConfigExport } from '@tarojs/cli';
 import TsconfigPathsPlugin from 'tsconfig-paths-webpack-plugin';
+import webpack from 'webpack';
 import devConfig from './dev';
 import prodConfig from './prod';
 import vitePluginImp from 'vite-plugin-imp';
@@ -53,6 +54,20 @@ export default defineConfig<'webpack5'>(async (merge, { command, mode }) => {
       },
       webpackChain(chain) {
         chain.resolve.plugin('tsconfig-paths').use(TsconfigPathsPlugin);
+        chain.plugin('define-firebase-env').use(webpack.DefinePlugin, [
+          {
+            __GM_FIREBASE_ENV__: JSON.stringify({
+              apiKey: process.env.TARO_APP_FIREBASE_API_KEY || '',
+              authDomain: process.env.TARO_APP_FIREBASE_AUTH_DOMAIN || '',
+              projectId: process.env.TARO_APP_FIREBASE_PROJECT_ID || '',
+              storageBucket: process.env.TARO_APP_FIREBASE_STORAGE_BUCKET || '',
+              messagingSenderId: process.env.TARO_APP_FIREBASE_MESSAGING_SENDER_ID || '',
+              appId: process.env.TARO_APP_FIREBASE_APP_ID || '',
+              measurementId: process.env.TARO_APP_FIREBASE_MEASUREMENT_ID || '',
+            }),
+            __GM_FIREBASE_DEBUG__: JSON.stringify(process.env.TARO_APP_FIREBASE_DEBUG || ''),
+          },
+        ]);
       },
     },
     h5: {
@@ -90,6 +105,20 @@ export default defineConfig<'webpack5'>(async (merge, { command, mode }) => {
       },
       webpackChain(chain) {
         chain.resolve.plugin('tsconfig-paths').use(TsconfigPathsPlugin);
+        chain.plugin('define-firebase-env').use(webpack.DefinePlugin, [
+          {
+            __GM_FIREBASE_ENV__: JSON.stringify({
+              apiKey: process.env.TARO_APP_FIREBASE_API_KEY || '',
+              authDomain: process.env.TARO_APP_FIREBASE_AUTH_DOMAIN || '',
+              projectId: process.env.TARO_APP_FIREBASE_PROJECT_ID || '',
+              storageBucket: process.env.TARO_APP_FIREBASE_STORAGE_BUCKET || '',
+              messagingSenderId: process.env.TARO_APP_FIREBASE_MESSAGING_SENDER_ID || '',
+              appId: process.env.TARO_APP_FIREBASE_APP_ID || '',
+              measurementId: process.env.TARO_APP_FIREBASE_MEASUREMENT_ID || '',
+            }),
+            __GM_FIREBASE_DEBUG__: JSON.stringify(process.env.TARO_APP_FIREBASE_DEBUG || ''),
+          },
+        ]);
       },
     },
     rn: {

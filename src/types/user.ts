@@ -19,10 +19,12 @@ export interface RegisterDraft {
   email?: string;
   phoneRaw: string;
   phoneE164: string;
+  verificationId?: string;
   password: string;
 }
 
 export interface ResetDraft {
   phoneRaw: string;
   phoneE164: string;
+  verificationId?: string;
 }

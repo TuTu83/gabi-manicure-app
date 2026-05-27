@@ -3,6 +3,9 @@ import { getAuth, type Auth } from 'firebase/auth';
 import { getFirestore, type Firestore } from 'firebase/firestore';
 import { getStorage, type FirebaseStorage } from 'firebase/storage';
 
+declare const __GM_FIREBASE_ENV__: any;
+declare const __GM_FIREBASE_DEBUG__: any;
+
 export interface FirebaseClientConfig {
   apiKey: string;
   authDomain: string;
@@ -11,46 +14,107 @@ export interface FirebaseClientConfig {
   storageBucket?: string;
 }
 
-function readEnvValue(key: string): string {
+function isFirebaseDebugEnabled(): boolean {
   try {
-    if (typeof process === 'undefined') return '';
-    if (key === 'TARO_APP_FIREBASE_API_KEY') return (process.env.TARO_APP_FIREBASE_API_KEY || '').trim();
-    if (key === 'TARO_APP_FIREBASE_AUTH_DOMAIN') return (process.env.TARO_APP_FIREBASE_AUTH_DOMAIN || '').trim();
-    if (key === 'TARO_APP_FIREBASE_PROJECT_ID') return (process.env.TARO_APP_FIREBASE_PROJECT_ID || '').trim();
-    if (key === 'TARO_APP_FIREBASE_APP_ID') return (process.env.TARO_APP_FIREBASE_APP_ID || '').trim();
-    if (key === 'TARO_APP_FIREBASE_STORAGE_BUCKET') return (process.env.TARO_APP_FIREBASE_STORAGE_BUCKET || '').trim();
-    return '';
+    if (typeof __GM_FIREBASE_DEBUG__ !== 'undefined' && String(__GM_FIREBASE_DEBUG__ || '') === '1') return true;
+  } catch {}
+  try {
+    const loc = (globalThis as any).location as Location | undefined;
+    const search = String(loc?.search || '');
+    const hash = String(loc?.hash || '');
+    return search.includes('firebaseDebug=1') || hash.includes('firebaseDebug=1');
   } catch {
-    return '';
+    return false;
   }
 }
 
+function readInjectedEnv(): Record<string, string> {
+  try {
+    if (typeof __GM_FIREBASE_ENV__ === 'undefined') return {};
+    return (__GM_FIREBASE_ENV__ as any) || {};
+  } catch {
+    return {};
+  }
+}
+
+function readEnvValue(key: string): string {
+  const env = readInjectedEnv();
+  const raw = String(env[key] || '');
+  return raw.trim();
+}
+
 export const firebaseConfig: FirebaseClientConfig = {
-  apiKey: readEnvValue('TARO_APP_FIREBASE_API_KEY'),
-  authDomain: readEnvValue('TARO_APP_FIREBASE_AUTH_DOMAIN'),
-  projectId: readEnvValue('TARO_APP_FIREBASE_PROJECT_ID'),
-  appId: readEnvValue('TARO_APP_FIREBASE_APP_ID'),
-  storageBucket: readEnvValue('TARO_APP_FIREBASE_STORAGE_BUCKET'),
+  apiKey: readEnvValue('apiKey'),
+  authDomain: readEnvValue('authDomain'),
+  projectId: readEnvValue('projectId'),
+  appId: readEnvValue('appId'),
+  storageBucket: readEnvValue('storageBucket'),
 };
 
 export function isFirebaseConfigured(): boolean {
   return Boolean(firebaseConfig.apiKey && firebaseConfig.authDomain && firebaseConfig.projectId && firebaseConfig.appId);
 }
 
+function maskValue(value: string): string {
+  const v = String(value || '').trim();
+  if (!v) return '';
+  const suffix = v.length <= 4 ? v : v.slice(-4);
+  return `***${suffix} (len=${v.length})`;
+}
+
+function logFirebaseEnvStatus(): void {
+  if (!isFirebaseDebugEnabled()) return;
+  const apiKey = readEnvValue('apiKey');
+  const authDomain = readEnvValue('authDomain');
+  const projectId = readEnvValue('projectId');
+  const storageBucket = readEnvValue('storageBucket');
+  const messagingSenderId = readEnvValue('messagingSenderId');
+  const appId = readEnvValue('appId');
+  const measurementId = readEnvValue('measurementId');
+
+  console.log('[FIREBASE ENV]', {
+    apiKey: maskValue(apiKey),
+    authDomain: authDomain ? authDomain : '',
+    projectId: projectId ? projectId : '',
+    storageBucket: storageBucket ? storageBucket : '',
+    messagingSenderId: maskValue(messagingSenderId),
+    appId: maskValue(appId),
+    measurementId: maskValue(measurementId),
+  });
+
+  const required: Array<[string, string]> = [
+    ['apiKey', apiKey],
+    ['authDomain', authDomain],
+    ['projectId', projectId],
+    ['appId', appId],
+  ];
+  for (const [name, value] of required) {
+    if (!String(value || '').trim()) console.error('[FIREBASE ERROR] variável faltando:', name);
+  }
+}
+
 let app: FirebaseApp | null = null;
 let auth: Auth | null = null;
 let db: Firestore | null = null;
 let storage: FirebaseStorage | null = null;
+let loggedInit = false;
 
 export function getFirebaseApp(): FirebaseApp | null {
   if (!isFirebaseConfigured()) return null;
   try {
+    if (!loggedInit) {
+      loggedInit = true;
+      logFirebaseEnvStatus();
+      if (isFirebaseDebugEnabled()) console.log('[FIREBASE] tentando inicializar app...');
+    }
     if (app) return app;
     const apps = getApps();
+    if (isFirebaseDebugEnabled()) console.log('[FIREBASE] getApps()', { count: apps.length });
     app = apps.length ? apps[0] : initializeApp(firebaseConfig);
+    if (isFirebaseDebugEnabled()) console.log('[FIREBASE] app inicializado com sucesso');
     return app;
   } catch (error) {
-    console.error('[Firebase] falha ao inicializar', error);
+    console.error('[FIREBASE INIT ERROR]', error);
     return null;
   }
 }

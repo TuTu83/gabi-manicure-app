@@ -23,3 +23,6 @@ pnpm-debug.log*
 
 coverage/
 .eslintcache
+
+.vercel
+.env*

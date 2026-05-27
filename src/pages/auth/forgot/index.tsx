@@ -1,16 +1,12 @@
 import React, { useState } from 'react';
 import { Button, Input, Text, View } from '@tarojs/components';
 import Taro from '@tarojs/taro';
-import classnames from 'classnames';
-import { createOtpSession } from '@/services/otpService';
+import { sendPhoneVerificationCode } from '@/services/authService';
 import { useAppStore } from '@/store/appStore';
-import { normalizePhoneBRToE164, validatePhoneBR } from '@/utils/validators';
+import { formatPhoneBRDisplay, normalizePhoneBRToE164, validatePhoneBR } from '@/utils/validators';
 import styles from './index.module.scss';
 
 function ForgotPasswordPage() {
-  const otpChannel = useAppStore((s) => s.otpChannel);
-  const setOtpChannel = useAppStore((s) => s.setOtpChannel);
-  const setOtpSession = useAppStore((s) => s.setOtpSession);
   const setResetDraft = useAppStore((s) => s.setResetDraft);
 
   const [phone, setPhone] = useState('');
@@ -26,8 +22,8 @@ function ForgotPasswordPage() {
 
     setLoading(true);
     try {
-      setResetDraft({ phoneRaw: phone, phoneE164 });
-      setOtpSession(createOtpSession(phoneE164, otpChannel));
+      const verificationId = await sendPhoneVerificationCode({ phoneE164, recaptchaContainerId: 'recaptcha-forgot' });
+      setResetDraft({ phoneRaw: phone, phoneE164, verificationId });
       Taro.navigateTo({ url: '/pages/auth/verify/index?mode=reset' });
     } catch (error: any) {
       setErrorText(error?.message || 'Não foi possível enviar o código');
@@ -44,25 +40,17 @@ function ForgotPasswordPage() {
       </View>
 
       <View className={styles.card}>
+        <View id="recaptcha-forgot" />
         <Text className={styles.fieldLabel}>Telefone com DDD</Text>
         <View className={styles.inputRow}>
-          <Input className={styles.input} value={phone} onInput={(e) => setPhone(e.detail.value)} placeholder="Ex.: 11999998888" />
-        </View>
-
-        <Text className={styles.fieldLabel}>Receber código via</Text>
-        <View className={styles.channelRow}>
-          <Button
-            className={classnames(styles.channelBtn, otpChannel === 'sms' && styles.channelBtnActive)}
-            onClick={() => setOtpChannel('sms')}
-          >
-            <Text className={styles.channelBtnText}>SMS</Text>
-          </Button>
-          <Button
-            className={classnames(styles.channelBtn, otpChannel === 'whatsapp' && styles.channelBtnActive)}
-            onClick={() => setOtpChannel('whatsapp')}
-          >
-            <Text className={styles.channelBtnText}>WhatsApp</Text>
-          </Button>
+          <Input
+            className={styles.input}
+            value={phone}
+            type="text"
+            maxlength={20}
+            onInput={(e) => setPhone(formatPhoneBRDisplay(e.detail.value))}
+            placeholder="Ex.: (11) 999999999"
+          />
         </View>
 
         {errorText ? <Text className={styles.errorText}>{errorText}</Text> : null}

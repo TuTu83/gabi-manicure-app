@@ -2,8 +2,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { Button, Input, Text, View } from '@tarojs/components';
 import Taro, { useRouter } from '@tarojs/taro';
 import classnames from 'classnames';
-import { createOtpSession, verifyOtp } from '@/services/otpService';
-import { registerWithPhonePassword } from '@/services/authService';
+import { linkCurrentUserWithPhoneCode, registerWithPhonePassword, sendPhoneVerificationCode, signInWithPhoneCode, signOut } from '@/services/authService';
 import { useAppStore } from '@/store/appStore';
 import { validateOtp6 } from '@/utils/validators';
 import styles from './index.module.scss';
@@ -22,9 +21,8 @@ function VerifyCodePage() {
 
   const registerDraft = useAppStore((s) => s.registerDraft);
   const resetDraft = useAppStore((s) => s.resetDraft);
-  const otpChannel = useAppStore((s) => s.otpChannel);
-  const otpSession = useAppStore((s) => s.otpSession);
-  const setOtpSession = useAppStore((s) => s.setOtpSession);
+  const setRegisterDraft = useAppStore((s) => s.setRegisterDraft);
+  const setResetDraft = useAppStore((s) => s.setResetDraft);
   const resetAuthFlow = useAppStore((s) => s.resetAuthFlow);
 
   const phoneE164 = useMemo(() => {
@@ -32,19 +30,17 @@ function VerifyCodePage() {
     return resetDraft?.phoneE164 || '';
   }, [mode, registerDraft, resetDraft]);
 
-  const [digits, setDigits] = useState(['', '', '', '', '', '']);
+  const verificationId = useMemo(() => {
+    if (mode === 'register') return registerDraft?.verificationId || '';
+    return resetDraft?.verificationId || '';
+  }, [mode, registerDraft, resetDraft]);
+
+  const [otpValue, setOtpValue] = useState('');
+  const [otpFocus, setOtpFocus] = useState(true);
   const [errorText, setErrorText] = useState<string | null>(null);
   const [successText, setSuccessText] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
-  const [secondsLeft, setSecondsLeft] = useState(0);
-
-  useEffect(() => {
-    if (!otpSession || !otpSession.createdAt) return;
-    const now = Date.now();
-    const elapsed = Math.floor((now - otpSession.createdAt) / 1000);
-    const left = Math.max(0, 60 - elapsed);
-    setSecondsLeft(left);
-  }, [otpSession]);
+  const [secondsLeft, setSecondsLeft] = useState(60);
 
   useEffect(() => {
     if (secondsLeft <= 0) return;
@@ -55,12 +51,13 @@ function VerifyCodePage() {
   }, [secondsLeft]);
 
   useEffect(() => {
-    if (!phoneE164) {
+    if (!phoneE164 || !verificationId) {
       Taro.redirectTo({ url: '/pages/auth/login/index' });
     }
-  }, [phoneE164]);
+  }, [phoneE164, verificationId]);
 
-  const code = digits.join('');
+  const digits = useMemo(() => Array.from({ length: 6 }, (_, idx) => otpValue[idx] || ''), [otpValue]);
+  const code = otpValue;
 
   const handleConfirm = async () => {
     setErrorText(null);
@@ -69,12 +66,17 @@ function VerifyCodePage() {
     const otpErr = validateOtp6(code);
     if (otpErr) return setErrorText(otpErr);
 
-    const result = verifyOtp(otpSession, code);
-    if (!result.ok) return setErrorText(result.reason || 'Código inválido');
-
     if (mode === 'reset') {
-      setSuccessText('Código validado');
-      Taro.redirectTo({ url: '/pages/auth/reset/index' });
+      setLoading(true);
+      try {
+        await signInWithPhoneCode({ verificationId, code });
+        setSuccessText('Código validado');
+        Taro.redirectTo({ url: '/pages/auth/reset/index' });
+      } catch (error: any) {
+        setErrorText(error?.message || 'Não foi possível validar o código');
+      } finally {
+        setLoading(false);
+      }
       return;
     }
 
@@ -89,7 +91,9 @@ function VerifyCodePage() {
         phoneRaw: registerDraft.phoneRaw,
         password: registerDraft.password,
       });
+      await linkCurrentUserWithPhoneCode({ verificationId, code });
       resetAuthFlow();
+      await signOut();
       Taro.showToast({ title: 'Conta criada com sucesso', icon: 'success' });
       Taro.redirectTo({ url: '/pages/auth/login/index' });
     } catch (error: any) {
@@ -102,21 +106,25 @@ function VerifyCodePage() {
   const handleResend = () => {
     if (secondsLeft > 0) return;
     if (!phoneE164) return;
-    const session = createOtpSession(phoneE164, otpChannel);
-    setOtpSession(session);
-    setDigits(['', '', '', '', '', '']);
     setErrorText(null);
-    setSuccessText('Código reenviado');
-    setSecondsLeft(60);
+    setSuccessText(null);
+    setOtpValue('');
+    (async () => {
+      try {
+        const nextVerificationId = await sendPhoneVerificationCode({ phoneE164, recaptchaContainerId: 'recaptcha-verify' });
+        if (mode === 'register' && registerDraft) setRegisterDraft({ ...registerDraft, verificationId: nextVerificationId });
+        if (mode === 'reset' && resetDraft) setResetDraft({ ...resetDraft, verificationId: nextVerificationId });
+        setSuccessText('Código reenviado');
+        setSecondsLeft(60);
+      } catch (error: any) {
+        setErrorText(error?.message || 'Não foi possível reenviar o código');
+      }
+    })();
   };
 
-  const handleDigitChange = (index: number, value: string) => {
-    const onlyDigits = (value || '').replace(/\D/g, '').slice(-1);
-    setDigits((prev) => {
-      const next = [...prev];
-      next[index] = onlyDigits;
-      return next;
-    });
+  const handleOtpChange = (value: string) => {
+    const onlyDigits = (value || '').replace(/\D/g, '').slice(0, 6);
+    setOtpValue(onlyDigits);
   };
 
   return (
@@ -124,22 +132,33 @@ function VerifyCodePage() {
       <View className={styles.card}>
         <Text className={styles.title}>Confirme seu código</Text>
         <Text className={styles.desc}>
-          Enviamos um código de 6 dígitos para {maskPhone(phoneE164)} via {otpChannel === 'sms' ? 'SMS' : 'WhatsApp'}.
+          Enviamos um código de 6 dígitos para {maskPhone(phoneE164)} via SMS.
         </Text>
 
-        <View className={styles.otpRow}>
+        <View
+          className={styles.otpRow}
+          onClick={() => {
+            setOtpFocus(true);
+          }}
+        >
           {digits.map((d, idx) => (
             <View className={styles.otpBox} key={`otp_${idx}`}>
-              <Input
-                className={styles.otpInput}
-                value={d}
-                type="number"
-                maxlength={1}
-                onInput={(e) => handleDigitChange(idx, e.detail.value)}
-              />
+              <Text className={styles.otpDigit}>{d}</Text>
             </View>
           ))}
+          <Input
+            className={styles.otpHiddenInput}
+            value={otpValue}
+            type="number"
+            maxlength={6}
+            focus={otpFocus}
+            onFocus={() => setOtpFocus(true)}
+            onBlur={() => setOtpFocus(false)}
+            onInput={(e) => handleOtpChange(e.detail.value)}
+          />
         </View>
+
+        <View id="recaptcha-verify" />
 
         {errorText ? <Text className={styles.errorText}>{errorText}</Text> : null}
         {successText ? <Text className={styles.successText}>{successText}</Text> : null}
@@ -158,8 +177,6 @@ function VerifyCodePage() {
           </Button>
           <Text className={styles.timerText}>{secondsLeft > 0 ? `Aguarde ${secondsLeft}s` : 'Você pode reenviar agora'}</Text>
         </View>
-
-        {otpSession?.code ? <Text className={styles.testCode}>Código de teste: {otpSession.code}</Text> : null}
       </View>
     </View>
   );

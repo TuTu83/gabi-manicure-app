@@ -3,7 +3,7 @@ import { Button, Image, Input, Text, View } from '@tarojs/components';
 import Taro from '@tarojs/taro';
 import { loginWithIdentifier, signInWithGoogleH5, updateUserPhone } from '@/services/authService';
 import { useAppStore } from '@/store/appStore';
-import { getFirstName, validatePhoneBR } from '@/utils/validators';
+import { formatPhoneBRDisplay, getFirstName, validatePhoneBR } from '@/utils/validators';
 import type { UserProfile } from '@/types/user';
 import styles from './index.module.scss';
 
@@ -172,8 +172,10 @@ function LoginPage() {
               <Input
                 className={styles.input}
                 value={phoneForGoogle}
-                onInput={(e) => setPhoneForGoogle(e.detail.value)}
-                placeholder="Ex.: 11999998888"
+                type="text"
+                maxlength={20}
+                onInput={(e) => setPhoneForGoogle(formatPhoneBRDisplay(e.detail.value))}
+                placeholder="Ex.: (11) 999999999"
               />
             </View>
             {googleError ? <Text className={styles.errorText}>{googleError}</Text> : null}

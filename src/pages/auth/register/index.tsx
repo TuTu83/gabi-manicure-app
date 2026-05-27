@@ -1,10 +1,10 @@
 import React, { useMemo, useState } from 'react';
 import { Button, Input, Text, View } from '@tarojs/components';
 import Taro from '@tarojs/taro';
-import classnames from 'classnames';
 import { useAppStore } from '@/store/appStore';
-import { createOtpSession } from '@/services/otpService';
+import { sendPhoneVerificationCode } from '@/services/authService';
 import {
+  formatPhoneBRDisplay,
   normalizePhoneBRToE164,
   validateFullName,
   validatePasswordConfirm,
@@ -15,9 +15,6 @@ import styles from './index.module.scss';
 
 function RegisterPage() {
   const setRegisterDraft = useAppStore((s) => s.setRegisterDraft);
-  const otpChannel = useAppStore((s) => s.otpChannel);
-  const setOtpChannel = useAppStore((s) => s.setOtpChannel);
-  const setOtpSession = useAppStore((s) => s.setOtpSession);
 
   const [fullName, setFullName] = useState('');
   const [socialName, setSocialName] = useState('');
@@ -39,6 +36,7 @@ function RegisterPage() {
   };
 
   const passwordHint = useMemo(() => {
+    if (!(password || '').trim()) return null;
     const err = validatePasswordSecurity(password);
     return err ? err : 'Senha segura';
   }, [password]);
@@ -61,16 +59,17 @@ function RegisterPage() {
 
     setLoading(true);
     try {
-      setRegisterDraft({
+      const draft = {
         fullName: fullName.trim(),
         socialName: socialName.trim() || undefined,
         email: email.trim().toLowerCase() || undefined,
         phoneRaw: phone,
         phoneE164,
         password,
-      });
-      const session = createOtpSession(phoneE164, otpChannel);
-      setOtpSession(session);
+      };
+
+      const verificationId = await sendPhoneVerificationCode({ phoneE164, recaptchaContainerId: 'recaptcha-register' });
+      setRegisterDraft({ ...draft, verificationId });
       Taro.navigateTo({ url: '/pages/auth/verify/index?mode=register' });
     } catch (error: any) {
       setErrorText(error?.message || 'Não foi possível continuar');
@@ -87,6 +86,7 @@ function RegisterPage() {
       </View>
 
       <View className={styles.card}>
+        <View id="recaptcha-register" />
         <Text className={styles.fieldLabel}>Nome completo</Text>
         <View className={styles.inputRow}>
           <Input className={styles.input} value={fullName} onInput={(e) => setFullName(e.detail.value)} placeholder="Ex.: Gabriela Silva" />
@@ -104,7 +104,14 @@ function RegisterPage() {
 
         <Text className={styles.fieldLabel}>Telefone com DDD</Text>
         <View className={styles.inputRow}>
-          <Input className={styles.input} value={phone} onInput={(e) => setPhone(e.detail.value)} placeholder="Ex.: 11999998888" />
+          <Input
+            className={styles.input}
+            value={phone}
+            type="text"
+            maxlength={20}
+            onInput={(e) => setPhone(formatPhoneBRDisplay(e.detail.value))}
+            placeholder="Ex.: (11) 999999999"
+          />
         </View>
 
         <Text className={styles.fieldLabel}>Senha</Text>
@@ -120,7 +127,7 @@ function RegisterPage() {
             <Text className={styles.toggleText}>{showPassword ? 'Ocultar' : 'Mostrar'}</Text>
           </View>
         </View>
-        <Text className={styles.subtitle}>{passwordHint}</Text>
+        {passwordHint ? <Text className={styles.helpText}>{passwordHint}</Text> : null}
 
         <Text className={styles.fieldLabel} style={{ marginTop: '24rpx' }}>
           Confirmar senha
@@ -138,29 +145,13 @@ function RegisterPage() {
           </View>
         </View>
 
-        <Text className={styles.fieldLabel}>Receber código via</Text>
-        <View className={styles.channelRow}>
-          <Button
-            className={classnames(styles.channelBtn, otpChannel === 'sms' && styles.channelBtnActive)}
-            onClick={() => setOtpChannel('sms')}
-          >
-            <Text className={styles.channelBtnText}>SMS</Text>
-          </Button>
-          <Button
-            className={classnames(styles.channelBtn, otpChannel === 'whatsapp' && styles.channelBtnActive)}
-            onClick={() => setOtpChannel('whatsapp')}
-          >
-            <Text className={styles.channelBtnText}>WhatsApp</Text>
-          </Button>
-        </View>
-
         {errorText ? <Text className={styles.errorText}>{errorText}</Text> : null}
 
         <Button className={styles.primaryBtn} loading={loading} onClick={handleContinue}>
           <Text className={styles.primaryBtnText}>Enviar código</Text>
         </Button>
 
-        <Text className={styles.footerLink} onClick={() => Taro.navigateBack()}>
+        <Text className={styles.footerLink} onClick={() => Taro.redirectTo({ url: '/pages/auth/login/index' })}>
           Já tenho conta
         </Text>
       </View>

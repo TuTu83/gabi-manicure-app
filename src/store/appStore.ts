@@ -1,7 +1,6 @@
 import { create } from 'zustand';
 import { safeGetStorage, safeRemoveStorage, safeSetStorage, storageKeys } from '@/services/storage';
 import type { RegisterDraft, ResetDraft, UserProfile } from '@/types/user';
-import type { OtpChannel, OtpSession } from '@/services/otpService';
 import type { AppSettings } from '@/types/settings';
 import { getLocalSettings } from '@/services/settingsService';
 
@@ -25,12 +24,8 @@ interface AppState extends PersistedAppState {
 
   registerDraft: RegisterDraft | null;
   resetDraft: ResetDraft | null;
-  otpChannel: OtpChannel;
-  otpSession: OtpSession | null;
   setRegisterDraft: (draft: RegisterDraft | null) => void;
   setResetDraft: (draft: ResetDraft | null) => void;
-  setOtpChannel: (channel: OtpChannel) => void;
-  setOtpSession: (session: OtpSession | null) => void;
   resetAuthFlow: () => void;
 }
 
@@ -93,20 +88,14 @@ export const useAppStore = create<AppState>((set, get) => {
       set({
         registerDraft: null,
         resetDraft: null,
-        otpChannel: 'sms',
-        otpSession: null,
       });
     },
 
     registerDraft: null,
     resetDraft: null,
-    otpChannel: 'sms',
-    otpSession: null,
     setRegisterDraft: (draft) => set({ registerDraft: draft }),
     setResetDraft: (draft) => set({ resetDraft: draft }),
-    setOtpChannel: (channel) => set({ otpChannel: channel }),
-    setOtpSession: (session) => set({ otpSession: session }),
-    resetAuthFlow: () => set({ registerDraft: null, resetDraft: null, otpSession: null, otpChannel: 'sms' }),
+    resetAuthFlow: () => set({ registerDraft: null, resetDraft: null }),
   };
 });
 

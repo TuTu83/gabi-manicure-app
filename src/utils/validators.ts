@@ -6,10 +6,19 @@ export function getFirstName(fullName: string): string {
 
 export function normalizePhoneBRToE164(phoneRaw: string): string | null {
   const digits = (phoneRaw || '').replace(/\D/g, '');
-  if (digits.length < 10 || digits.length > 13) return null;
-  const withCountry = digits.startsWith('55') ? digits : `55${digits}`;
-  if (withCountry.length < 12 || withCountry.length > 13) return null;
-  return `+${withCountry}`;
+  if (!digits) return null;
+  const national = digits.startsWith('55') ? digits.slice(2) : digits;
+  if (national.length !== 11) return null;
+  return `+55${national}`;
+}
+
+export function formatPhoneBRDisplay(phoneRaw: string): string {
+  const digits = (phoneRaw || '').replace(/\D/g, '');
+  if (!digits) return '';
+  let national = digits.startsWith('55') && digits.length > 11 ? digits.slice(2) : digits;
+  national = national.slice(0, 11);
+  if (national.length < 3) return `(${national}`;
+  return `(${national.slice(0, 2)}) ${national.slice(2)}`;
 }
 
 export function validateFullName(value: string): string | null {

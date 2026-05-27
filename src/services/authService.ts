@@ -5,9 +5,13 @@ import { getFirebaseAuth, getFirebaseDb, isFirebaseConfigured } from '@/services
 import { collection, doc, getDoc, getDocs, limit, query, setDoc, where } from 'firebase/firestore';
 import {
   GoogleAuthProvider,
+  PhoneAuthProvider,
+  RecaptchaVerifier,
   createUserWithEmailAndPassword,
   deleteUser,
+  linkWithCredential,
   signInWithEmailAndPassword,
+  signInWithCredential,
   signInWithPopup,
   signOut as firebaseSignOut,
   updatePassword,
@@ -371,6 +375,82 @@ export async function signOut(): Promise<void> {
         console.error('[Auth] falha ao sair no Firebase', error);
       }
     }
+  }
+}
+
+let recaptchaVerifier: RecaptchaVerifier | null = null;
+
+function getOrCreateRecaptchaVerifier(containerId: string): RecaptchaVerifier {
+  const auth = getFirebaseAuth();
+  if (!auth) throw new Error('Firebase indisponível');
+  if (process.env.TARO_ENV !== 'h5') throw new Error('Envio de SMS disponível apenas no H5');
+  if (!containerId) throw new Error('Recaptcha container inválido');
+
+  try {
+    recaptchaVerifier?.clear();
+  } catch {}
+  recaptchaVerifier = new RecaptchaVerifier(auth, containerId, { size: 'invisible' });
+  return recaptchaVerifier;
+}
+
+function mapPhoneAuthError(error: any): string {
+  const code = String(error?.code || '');
+  if (code === 'auth/invalid-phone-number') return 'Telefone inválido';
+  if (code === 'auth/unauthorized-domain') return 'Domínio não autorizado no Firebase (adicione o domínio da Vercel em Authorized domains).';
+  if (code === 'auth/too-many-requests') return 'Muitas tentativas. Tente novamente mais tarde.';
+  if (code === 'auth/quota-exceeded') return 'Limite de SMS excedido no Firebase. Tente novamente mais tarde.';
+  if (code === 'auth/captcha-check-failed') return 'Falha no reCAPTCHA. Atualize a página e tente novamente.';
+  if (code === 'auth/operation-not-allowed') return 'Login por telefone não está ativo no Firebase.';
+  if (code === 'auth/invalid-verification-code') return 'Código inválido';
+  if (code === 'auth/missing-verification-code') return 'Digite o código de 6 dígitos';
+  return error?.message || 'Falha ao enviar/validar o código';
+}
+
+export async function sendPhoneVerificationCode(params: { phoneE164: string; recaptchaContainerId: string }): Promise<string> {
+  if (!isFirebaseConfigured()) throw new Error('Firebase não configurado');
+  const auth = getFirebaseAuth();
+  if (!auth) throw new Error('Firebase indisponível');
+  const phone = (params.phoneE164 || '').trim();
+  if (!phone.startsWith('+')) throw new Error('Telefone inválido');
+
+  try {
+    const verifier = getOrCreateRecaptchaVerifier(params.recaptchaContainerId);
+    await verifier.render();
+    const provider = new PhoneAuthProvider(auth);
+    const verificationId = await provider.verifyPhoneNumber(phone, verifier);
+    return verificationId;
+  } catch (error: any) {
+    console.error('[Auth] falha ao enviar SMS', error);
+    throw new Error(mapPhoneAuthError(error));
+  }
+}
+
+export async function signInWithPhoneCode(params: { verificationId: string; code: string }): Promise<void> {
+  if (!isFirebaseConfigured()) throw new Error('Firebase não configurado');
+  const auth = getFirebaseAuth();
+  if (!auth) throw new Error('Firebase indisponível');
+
+  try {
+    const credential = PhoneAuthProvider.credential(params.verificationId, params.code);
+    await signInWithCredential(auth, credential);
+  } catch (error: any) {
+    console.error('[Auth] falha ao validar código (login)', error);
+    throw new Error(mapPhoneAuthError(error));
+  }
+}
+
+export async function linkCurrentUserWithPhoneCode(params: { verificationId: string; code: string }): Promise<void> {
+  if (!isFirebaseConfigured()) throw new Error('Firebase não configurado');
+  const auth = getFirebaseAuth();
+  if (!auth) throw new Error('Firebase indisponível');
+  if (!auth.currentUser) throw new Error('Sessão expirada');
+
+  try {
+    const credential = PhoneAuthProvider.credential(params.verificationId, params.code);
+    await linkWithCredential(auth.currentUser, credential);
+  } catch (error: any) {
+    console.error('[Auth] falha ao vincular telefone', error);
+    throw new Error(mapPhoneAuthError(error));
   }
 }
 
