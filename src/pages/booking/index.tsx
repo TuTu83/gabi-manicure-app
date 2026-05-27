@@ -133,6 +133,12 @@ function BookingPage() {
   }, []);
 
   useEffect(() => {
+    if (!professionals.length) return;
+    const exists = professionals.some((p) => p.id === selectedProfessionalId);
+    if (!exists) setSelectedProfessionalId(professionals[0].id);
+  }, [professionals, selectedProfessionalId]);
+
+  useEffect(() => {
     if (!userId) return;
     return subscribeUserAppointments(userId, setAppointments);
   }, [userId]);

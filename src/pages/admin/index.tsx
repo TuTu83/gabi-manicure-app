@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { Button, Image, Input, Picker, ScrollView, Text, View } from '@tarojs/components';
+import { Button, Image, Input, Picker, ScrollView, Switch, Text, View } from '@tarojs/components';
 import Taro from '@tarojs/taro';
 import classnames from 'classnames';
 import dayjs from 'dayjs';
@@ -119,10 +119,11 @@ function AdminPage() {
   const [serviceName, setServiceName] = useState('');
   const [serviceDesc, setServiceDesc] = useState('');
   const [servicePrice, setServicePrice] = useState('0');
-  const [serviceDuration, setServiceDuration] = useState('60');
+  const [serviceDurationMinutes, setServiceDurationMinutes] = useState(60);
   const [serviceDefaultProfessionalId, setServiceDefaultProfessionalId] = useState<string>('');
   const [serviceActive, setServiceActive] = useState(true);
   const [serviceImageUrl, setServiceImageUrl] = useState('');
+  const [serviceImagePreviewBroken, setServiceImagePreviewBroken] = useState(false);
   const [serviceSort, setServiceSort] = useState('1');
 
   const [promoEditorOpen, setPromoEditorOpen] = useState(false);
@@ -669,10 +670,11 @@ function AdminPage() {
     setServiceName('');
     setServiceDesc('');
     setServicePrice('0');
-    setServiceDuration('60');
+    setServiceDurationMinutes(60);
     setServiceDefaultProfessionalId('');
     setServiceActive(true);
     setServiceImageUrl('');
+    setServiceImagePreviewBroken(false);
     setServiceSort('1');
     setServiceEditorOpen(true);
   };
@@ -682,10 +684,11 @@ function AdminPage() {
     setServiceName(s.name || '');
     setServiceDesc(s.description || '');
     setServicePrice(String(Math.round((s.priceCents || 0) / 100)));
-    setServiceDuration(String(s.durationMinutes || 60));
+    setServiceDurationMinutes(s.durationMinutes || 60);
     setServiceDefaultProfessionalId(s.defaultProfessionalId || '');
     setServiceActive(s.active !== false);
     setServiceImageUrl(s.imageUrl || '');
+    setServiceImagePreviewBroken(false);
     setServiceSort(String(s.sortOrder ?? 1));
     setServiceEditorOpen(true);
   };
@@ -694,7 +697,10 @@ function AdminPage() {
     try {
       const result = await Taro.chooseImage({ count: 1 });
       const path = result.tempFilePaths?.[0];
-      if (path) setServiceImageUrl(path);
+      if (path) {
+        setServiceImageUrl(path);
+        setServiceImagePreviewBroken(false);
+      }
     } catch (error) {
       console.error('[Admin] falha ao selecionar imagem', error);
     }
@@ -704,8 +710,8 @@ function AdminPage() {
     const name = serviceName.trim();
     if (!name) return setErrorText('Informe o nome do serviço');
     const priceCents = Math.max(0, Number(servicePrice) || 0) * 100;
-    const durationMinutes = Math.max(10, Number(serviceDuration) || 60);
     const sortOrder = Math.max(1, Number(serviceSort) || 1);
+    const durationMinutes = Math.max(10, Number(serviceDurationMinutes) || 60);
 
     await runSafe(async () => {
       const imageUrl =
@@ -2034,8 +2040,15 @@ function AdminPage() {
       {serviceEditorOpen ? (
         <View className={styles.modalMask} onClick={() => setServiceEditorOpen(false)}>
           <View className={styles.modalCard} onClick={(e) => e.stopPropagation()}>
-            <Text className={styles.modalTitle}>{serviceEditingId ? 'Editar serviço' : 'Novo serviço'}</Text>
-            <Text className={styles.modalDesc}>Preencha as informações do serviço.</Text>
+            <View style={{ marginBottom: '12rpx' }}>
+              <Text className={styles.modalTitle} style={{ display: 'block' }}>
+                {serviceEditingId ? 'Editar serviço' : 'Novo serviço'}
+              </Text>
+              <View style={{ height: '8rpx' }} />
+              <Text className={styles.modalDesc} style={{ display: 'block' }}>
+                Preencha as informações do serviço.
+              </Text>
+            </View>
 
             <Text className={styles.fieldLabel}>Nome</Text>
             <View className={styles.inputRow}>
@@ -2052,6 +2065,9 @@ function AdminPage() {
               <Picker
                 mode="selector"
                 range={['Nenhum (deixar livre)', ...professionals.map((p) => p.name)]}
+                value={
+                  serviceDefaultProfessionalId ? Math.max(0, professionals.findIndex((p) => p.id === serviceDefaultProfessionalId)) + 1 : 0
+                }
                 onChange={(e) => {
                   const idx = Number(e.detail.value);
                   if (idx <= 0) {
@@ -2073,35 +2089,47 @@ function AdminPage() {
               <Input className={styles.input} value={servicePrice} onInput={(e) => setServicePrice(e.detail.value)} type="number" placeholder="Ex.: 55" />
             </View>
 
-            <Text className={styles.fieldLabel}>Duração (min)</Text>
-            <View className={styles.row}>
-              <View className={styles.inputRow} style={{ flex: 1 }}>
-                <Input className={styles.input} value={serviceDuration} onInput={(e) => setServiceDuration(e.detail.value)} type="number" placeholder="Ex.: 60" />
-              </View>
-              <View className={styles.inputRow} style={{ flex: 1 }}>
-                <Input className={styles.input} value={serviceSort} onInput={(e) => setServiceSort(e.detail.value)} type="number" placeholder="Ordem" />
-              </View>
+            <Text className={styles.fieldLabel}>Ordem (prioridade)</Text>
+            <View className={styles.inputRow}>
+              <Input className={styles.input} value={serviceSort} onInput={(e) => setServiceSort(e.detail.value)} type="number" placeholder="Ex.: 1" />
             </View>
 
             <Text className={styles.fieldLabel}>Ativo</Text>
-            <View className={styles.row}>
-              <Button className={styles.btnSecondary} onClick={() => setServiceActive((v) => !v)}>
-                <Text className={styles.btnSecondaryText}>{serviceActive ? 'Ativo' : 'Inativo'}</Text>
-              </Button>
-              <Button className={styles.btnSecondary} onClick={handlePickServiceImage}>
-                <Text className={styles.btnSecondaryText}>Selecionar imagem</Text>
-              </Button>
+            <View className={styles.row} style={{ alignItems: 'center' }}>
+              <Switch checked={serviceActive} onChange={(e) => setServiceActive(Boolean(e.detail.value))} />
+              <View style={{ width: '16rpx' }} />
+              <Text className={styles.listSub}>{serviceActive ? 'Ativado' : 'Desativado'}</Text>
             </View>
 
-            <Text className={styles.fieldLabel}>Imagem (URL ou arquivo selecionado)</Text>
-            <View className={styles.inputRow}>
-              <Input className={styles.input} value={serviceImageUrl} onInput={(e) => setServiceImageUrl(e.detail.value)} placeholder="URL da imagem" />
+            <Text className={styles.fieldLabel}>Imagem</Text>
+            <View className={styles.row}>
+              <Button className={styles.btnSecondary} onClick={handlePickServiceImage}>
+                <Text className={styles.btnSecondaryText}>{serviceImageUrl ? 'Trocar imagem' : 'Selecionar imagem'}</Text>
+              </Button>
+              {serviceImageUrl ? (
+                <Button
+                  className={styles.btnSecondary}
+                  onClick={() => {
+                    setServiceImageUrl('');
+                    setServiceImagePreviewBroken(false);
+                  }}
+                >
+                  <Text className={classnames(styles.btnSecondaryText, styles.dangerText)}>Remover</Text>
+                </Button>
+              ) : null}
             </View>
-            {serviceImageUrl ? (
+            {serviceImageUrl && !serviceImagePreviewBroken ? (
               <View style={{ marginTop: '16rpx' }}>
-                <Image src={serviceImageUrl} mode="aspectFill" style={{ width: '100%', height: '260rpx', borderRadius: '24rpx' }} />
+                <Image
+                  src={serviceImageUrl}
+                  mode="aspectFill"
+                  style={{ width: '100%', height: '260rpx', borderRadius: '24rpx' }}
+                  onError={() => setServiceImagePreviewBroken(true)}
+                />
               </View>
-            ) : null}
+            ) : (
+              <View style={{ marginTop: '16rpx', width: '100%', height: '260rpx', borderRadius: '24rpx', backgroundColor: 'rgba(0,0,0,0.04)' }} />
+            )}
 
             <View className={styles.modalActions}>
               <Button className={styles.modalBtn} onClick={() => setServiceEditorOpen(false)}>

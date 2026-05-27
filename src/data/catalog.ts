@@ -50,7 +50,6 @@ export const mockServices: ServiceItem[] = [
 
 export const mockProfessionals: Professional[] = [
   { id: 'pro_gabi', name: 'Gabi', bio: 'Especialista em acabamentos premium e gel.' },
-  { id: 'pro_ana', name: 'Ana', bio: 'Cutilagem delicada e esmaltação perfeita.' },
 ];
 
 export const mockPromotions: Promotion[] = [

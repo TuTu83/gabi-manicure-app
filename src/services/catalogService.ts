@@ -28,10 +28,11 @@ export async function fetchProfessionals(): Promise<Professional[]> {
   try {
     const snap = await getDocs(collection(db, 'professionals'));
     const data = snap.docs.map((d) => ({ id: d.id, ...(d.data() as Omit<Professional, 'id'>) }));
-    return data.length ? data : mockProfessionals;
+    const list = data.length ? data : mockProfessionals;
+    return list.filter((p) => (p.name || '').trim().toLowerCase() === 'gabi');
   } catch (error) {
     console.error('[Catalogo] falha ao buscar profissionais', error);
-    return mockProfessionals;
+    return mockProfessionals.filter((p) => (p.name || '').trim().toLowerCase() === 'gabi');
   }
 }
 
