@@ -23,6 +23,7 @@ function HomePage() {
   const [services, setServices] = useState<ServiceItem[]>([]);
   const [promotions, setPromotions] = useState<Promotion[]>([]);
   const [appointments, setAppointments] = useState<Appointment[]>([]);
+  const [brokenServiceImages, setBrokenServiceImages] = useState<Record<string, boolean>>({});
 
   useEffect(() => {
     if (!currentUser) {
@@ -140,7 +141,16 @@ function HomePage() {
         <View className={styles.serviceGrid}>
           {services.slice(0, 3).map((s) => (
             <View key={s.id} className={styles.serviceItem} onClick={() => Taro.switchTab({ url: '/pages/booking/index' })}>
-              {s.imageUrl ? <Image className={styles.serviceImage} src={s.imageUrl} mode="aspectFill" /> : <View className={styles.serviceImageFallback} />}
+              {s.imageUrl && !brokenServiceImages[`${s.id}_${s.imageUrl}`] ? (
+                <Image
+                  className={styles.serviceImage}
+                  src={s.imageUrl}
+                  mode="aspectFill"
+                  onError={() => setBrokenServiceImages((prev) => ({ ...prev, [`${s.id}_${s.imageUrl}`]: true }))}
+                />
+              ) : (
+                <View className={styles.serviceImageFallback} />
+              )}
               <Text className={styles.serviceName}>{s.name}</Text>
               <Text className={styles.serviceDesc}>{s.description}</Text>
             </View>

@@ -1,23 +1,22 @@
 import { collection, getDocs } from 'firebase/firestore';
 import { getFirebaseDb, isFirebaseConfigured } from '@/services/firebase';
 import type { Professional, Promotion, ServiceItem } from '@/types/booking';
-import { mockProfessionals, mockPromotions, mockServices } from '@/data/catalog';
+import { mockProfessionals, mockPromotions } from '@/data/catalog';
 
 export async function fetchServices(): Promise<ServiceItem[]> {
-  if (!isFirebaseConfigured()) return mockServices;
+  if (!isFirebaseConfigured()) return [];
   const db = getFirebaseDb();
-  if (!db) return mockServices;
+  if (!db) return [];
 
   try {
     const snap = await getDocs(collection(db, 'services'));
     const data = snap.docs.map((d) => ({ id: d.id, ...(d.data() as Omit<ServiceItem, 'id'>) }));
-    const list = data.length ? data : mockServices;
-    return list
+    return data
       .filter((s) => s.active !== false)
       .sort((a, b) => (a.sortOrder ?? 9999) - (b.sortOrder ?? 9999));
   } catch (error) {
     console.error('[Catalogo] falha ao buscar serviços', error);
-    return mockServices;
+    return [];
   }
 }
 

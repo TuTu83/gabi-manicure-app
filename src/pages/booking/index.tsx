@@ -45,6 +45,7 @@ function BookingPage() {
   const [selectedSlotStartAt, setSelectedSlotStartAt] = useState<number | null>(null);
   const [bookingNotes, setBookingNotes] = useState('');
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>('pix');
+  const [brokenServiceImages, setBrokenServiceImages] = useState<Record<string, boolean>>({});
 
   const [busy, setBusy] = useState<Array<{ startAt: number; endAt: number; status: AppointmentStatus }>>([]);
   const [loading, setLoading] = useState(false);
@@ -430,40 +431,52 @@ function BookingPage() {
         {tab === 'agendar' ? (
           <>
             <SectionHeader title="1) Serviços" />
-            <View className={styles.grid}>
-              {services.map((s) => {
-                const active = selectedServiceIds.includes(s.id);
-                return (
-                  <View
-                    key={s.id}
-                    className={classnames(styles.serviceItem, active && styles.serviceItemActive)}
-                    onClick={() => {
-                      setSelectedServiceIds((prev) => {
-                        const has = prev.includes(s.id);
-                        const next = has ? prev.filter((id) => id !== s.id) : [...prev, s.id];
-                        return next;
-                      });
-                      if (s.defaultProfessionalId && professionals.some((p) => p.id === s.defaultProfessionalId)) {
-                        setSelectedProfessionalId(s.defaultProfessionalId);
-                      }
-                      setSelectedSlotStartAt(null);
-                    }}
-                  >
-                    {s.imageUrl ? (
-                      <Image className={styles.serviceImage} src={s.imageUrl} mode="aspectFill" />
-                    ) : (
-                      <View className={styles.serviceImageFallback} />
-                    )}
-                    <Text className={styles.serviceName}>{s.name}</Text>
-                    <Text className={styles.serviceDesc}>{s.description}</Text>
-                    <View className={styles.metaRow}>
-                      <Text className={styles.metaText}>{s.durationMinutes} min</Text>
-                      <Text className={styles.metaText}>{priceFromCents(s.priceCents)}</Text>
+            {services.length ? (
+              <View className={styles.grid}>
+                {services.map((s) => {
+                  const active = selectedServiceIds.includes(s.id);
+                  const imageKey = `${s.id}_${s.imageUrl || ''}`;
+                  const showImage = Boolean(s.imageUrl) && !brokenServiceImages[imageKey];
+                  return (
+                    <View
+                      key={s.id}
+                      className={classnames(styles.serviceItem, active && styles.serviceItemActive)}
+                      onClick={() => {
+                        setSelectedServiceIds((prev) => {
+                          const has = prev.includes(s.id);
+                          const next = has ? prev.filter((id) => id !== s.id) : [...prev, s.id];
+                          return next;
+                        });
+                        if (s.defaultProfessionalId && professionals.some((p) => p.id === s.defaultProfessionalId)) {
+                          setSelectedProfessionalId(s.defaultProfessionalId);
+                        }
+                        setSelectedSlotStartAt(null);
+                      }}
+                    >
+                      {showImage ? (
+                        <Image
+                          className={styles.serviceImage}
+                          src={s.imageUrl}
+                          mode="aspectFill"
+                          onError={() => setBrokenServiceImages((prev) => ({ ...prev, [imageKey]: true }))}
+                        />
+                      ) : (
+                        <View className={styles.serviceImageFallback} />
+                      )}
+                      <Text className={styles.serviceName}>{s.name}</Text>
+                      <Text className={styles.serviceDesc}>{s.description}</Text>
+                      <View className={styles.metaRow}>
+                        <Text className={styles.metaText}>{priceFromCents(s.priceCents)}</Text>
+                      </View>
                     </View>
-                  </View>
-                );
-              })}
-            </View>
+                  );
+                })}
+              </View>
+            ) : (
+              <AppCard>
+                <Text className={styles.desc}>Nenhum serviço disponível no momento. Fale com a administradora para cadastrar serviços.</Text>
+              </AppCard>
+            )}
 
             <SectionHeader title="2) Profissional e data" />
             <AppCard>
@@ -547,9 +560,7 @@ function BookingPage() {
               <View style={{ height: '16rpx' }} />
               <View className={styles.pickRow}>
                 <Text className={styles.pickLabel}>Total</Text>
-                <Text className={styles.pickValue}>
-                  {priceFromCents(totalPriceCents)} • {totalDurationMinutes} min
-                </Text>
+                <Text className={styles.pickValue}>{priceFromCents(totalPriceCents)}</Text>
               </View>
               <View style={{ height: '16rpx' }} />
               <View className={styles.pickRow}>
@@ -618,9 +629,6 @@ function BookingPage() {
                     <View className={classnames(styles.badge, styles.badgePrimary)}>
                       <Text className={classnames(styles.badgeText, styles.badgePrimaryText)}>{a.status}</Text>
                     </View>
-                    <View className={styles.badge}>
-                      <Text className={styles.badgeText}>{a.durationMinutes} min</Text>
-                    </View>
                     {a.onMyWayAt ? (
                       <View className={styles.badge}>
                         <Text className={styles.badgeText}>a caminho</Text>
@@ -687,9 +695,6 @@ function BookingPage() {
             <View className={styles.badgeRow}>
               <View className={classnames(styles.badge, styles.badgePrimary)}>
                 <Text className={classnames(styles.badgeText, styles.badgePrimaryText)}>{selectedAppointment.status}</Text>
-              </View>
-              <View className={styles.badge}>
-                <Text className={styles.badgeText}>{selectedAppointment.durationMinutes} min</Text>
               </View>
             </View>
 
