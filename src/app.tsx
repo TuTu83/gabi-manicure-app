@@ -11,8 +11,28 @@ import './app.scss';
 
 const ONESIGNAL_APP_ID = '82892143-d160-4756-8b63-327b8f69a41e';
 
+// Armazena estado de debug em memória
+(window as any).__DEBUG_PUSH = {
+  lastSent: null,
+  lastReceived: null,
+  lastError: null,
+  logs: [],
+};
+
+const addDebugLog = (type: string, message: string, data?: any) => {
+  const log = { type, message, timestamp: Date.now(), data };
+  const debugStore = (window as any).__DEBUG_PUSH;
+  console.log(`\n=== [${type}] ===`);
+  console.log(message, data || '');
+  console.log('==================\n');
+  debugStore.logs.push(log);
+  if (debugStore.logs.length > 100) debugStore.logs.shift();
+  if (type.includes('ERROR') || type.includes('ERR')) {
+    debugStore.lastError = log;
+  }
+};
+
 function App(props: { children: React.ReactNode }) {
-  // Pode usar todos os React Hooks
   const setSettings = useAppStore((s) => s.setSettings);
   const settings = useAppStore((s) => s.settings);
   const currentUser = useAppStore((s) => s.currentUser);
@@ -25,12 +45,43 @@ function App(props: { children: React.ReactNode }) {
     const isBrowser = typeof window !== 'undefined' && typeof document !== 'undefined';
     if (!isBrowser) return;
     if (process.env.TARO_ENV !== 'h5') return;
-    if (!('serviceWorker' in navigator)) return;
+    
+    // ========================================
+    // ETAPA 1: DEBUG DE AMBIENTE E SW
+    // ========================================
+    addDebugLog('APP DEBUG', 'Iniciando sistema de debug completo');
+    addDebugLog('ENV DEBUG', `Ambiente: ${process.env.NODE_ENV}`);
+    addDebugLog('ENV DEBUG', `Taro Env: ${process.env.TARO_ENV}`);
+    addDebugLog('SW DEBUG', `navigator.serviceWorker disponível: ${'serviceWorker' in navigator}`);
+    
+    // Verifica Service Workers ativos
+    if ('serviceWorker' in navigator) {
+      navigator.serviceWorker.getRegistrations().then((regs) => {
+        addDebugLog('SW DEBUG', `Service Workers ativos encontrados: ${regs.length}`);
+        regs.forEach((reg, index) => {
+          addDebugLog('SW DEBUG', `SW ${index}: ${reg.scope}`, {
+            active: !!reg.active,
+            waiting: !!reg.waiting,
+            installing: !!reg.installing,
+          });
+        });
+      }).catch(err => {
+        addDebugLog('SW ERROR', `Erro ao buscar SW ativos: ${err.message}`, err);
+      });
+    }
 
     // Registra o Service Worker do OneSignal
-    navigator.serviceWorker.register('/OneSignalSDKWorker.js').catch((err) => {
-      console.warn('[PWA] falha ao registrar service worker do OneSignal', err);
-    });
+    addDebugLog('SW DEBUG', 'Registrando OneSignal Service Worker...');
+    navigator.serviceWorker.register('/OneSignalSDKWorker.js')
+      .then((reg) => {
+        addDebugLog('SW DEBUG', 'OneSignal Service Worker REGISTRADO com sucesso!', {
+          scope: reg.scope,
+          active: !!reg.active,
+        });
+      })
+      .catch((err) => {
+        addDebugLog('SW ERROR', 'Falha ao registrar SW do OneSignal', err);
+      });
   }, []);
 
   useEffect(() => {
@@ -42,10 +93,28 @@ function App(props: { children: React.ReactNode }) {
     let cancelled = false;
 
     const initOneSignal = async () => {
-      try {
-        console.log('[APP] Inicializando OneSignal...');
+      // ========================================
+      // ETAPA 2: DEBUG DE PERMISSÃO
+      // ========================================
+      addDebugLog('ONESIGNAL DEBUG', 'Inicializando sistema OneSignal');
+      addDebugLog('PERMISSÃO DEBUG', `Notification.permission: ${Notification?.permission}`);
+      
+      // Verifica Push Manager
+      addDebugLog('PUSH DEBUG', `PushManager disponível: ${'PushManager' in window}`);
+      
+      if ('PushManager' in window && 'serviceWorker' in navigator) {
+        navigator.serviceWorker.ready.then((reg) => {
+          reg.pushManager.getSubscription().then((sub) => {
+            addDebugLog('PUSH DEBUG', `PushSubscription disponível: ${!!sub}`, sub ? {
+              endpoint: !!sub.endpoint,
+              keys: !!sub.toJSON().keys,
+            } : null);
+          });
+        });
+      }
 
-        // Adiciona o script do OneSignal via CDN
+      try {
+        addDebugLog('ONESIGNAL DEBUG', 'Carregando script OneSignal...');
         const script = document.createElement('script');
         script.src = 'https://cdn.onesignal.com/sdks/web/v16/OneSignalSDK.page.js';
         script.defer = true;
@@ -55,48 +124,81 @@ function App(props: { children: React.ReactNode }) {
         script.onload = async () => {
           if (cancelled) return;
           
-          // Inicializa o OneSignal
+          addDebugLog('ONESIGNAL DEBUG', 'Script carregado, inicializando...');
           const OneSignal = (window as any).OneSignal || [];
+          
           OneSignal.push(function() {
+            // ========================================
+            // ETAPA 3: INICIALIZAÇÃO ONE SIGNAL
+            // ========================================
+            addDebugLog('ONESIGNAL DEBUG', `Chamando OneSignal.init com AppID: ${ONESIGNAL_APP_ID}`);
+            
             OneSignal.init({
               appId: ONESIGNAL_APP_ID,
               serviceWorkerParam: {
-                scope: '/OneSignalSDKWorker.js'
+                scope: '/'
               },
               serviceWorkerPath: 'OneSignalSDKWorker.js',
               notifyButton: {
                 enable: false
-              }
+              },
+              allowLocalhostAsSecureOrigin: true,
             });
 
-            // Quando o usuário se inscreve, salva o player ID
+            // ========================================
+            // ETAPA 4: LISTENERS ONE SIGNAL
+            // ========================================
             OneSignal.on('subscriptionChange', async (isSubscribed: boolean) => {
+              addDebugLog('ONESIGNAL DEBUG', `subscriptionChange: isSubscribed=${isSubscribed}`);
+              
               if (isSubscribed && !cancelled) {
-                const playerId = await OneSignal.getUserId();
-                if (playerId) {
-                  console.log('[OneSignal] Player ID:', playerId);
-                  // Salva o player ID no Firestore como fcmToken (para compatibilidade)
-                  await updateUserFcmToken(currentUser.id, playerId);
+                try {
+                  const playerId = await OneSignal.getUserId();
+                  addDebugLog('ONESIGNAL DEBUG', `Player ID obtido: ${playerId}`);
+                  
+                  const subscriptionId = OneSignal.User.PushSubscription.id;
+                  const token = OneSignal.User.PushSubscription.token;
+                  const onesignalId = OneSignal.User.onesignalId;
+                  
+                  addDebugLog('ONESIGNAL DEBUG', 'Dados completos da inscrição', {
+                    playerId,
+                    subscriptionId,
+                    token: !!token,
+                    onesignalId,
+                  });
+                  
+                  if (playerId) {
+                    addDebugLog('FIRESTORE DEBUG', `Salvando playerId no Firestore para usuário ${currentUser.id}...`);
+                    await updateUserFcmToken(currentUser.id, playerId);
+                    addDebugLog('FIRESTORE DEBUG', 'Player ID SALVO com sucesso!');
+                  }
+                } catch (error) {
+                  addDebugLog('FIRESTORE ERROR', 'Erro ao salvar player ID', error);
                 }
               }
             });
 
-            // Listener para notificações em foreground
             OneSignal.on('notificationDisplay', (event: any) => {
-              console.log('[OneSignal] Notificação em foreground recebida:', event);
+              addDebugLog('PUSH DEBUG', 'NOTIFICAÇÃO RECEBIDA EM FOREGROUND!', event);
+              (window as any).__DEBUG_PUSH.lastReceived = event;
             });
 
-            // Listener para clique na notificação
             OneSignal.on('notificationOpened', (event: any) => {
-              console.log('[OneSignal] Notificação clicada:', event);
+              addDebugLog('PUSH DEBUG', 'NOTIFICAÇÃO CLICADA!', event);
               if (event?.url) {
                 window.location.href = event.url;
               }
             });
+
+            addDebugLog('ONESIGNAL DEBUG', 'Todos listeners configurados!');
           });
         };
+
+        script.onerror = (error) => {
+          addDebugLog('ONESIGNAL ERROR', 'Falha ao carregar script do OneSignal', error);
+        };
       } catch (error) {
-        console.error('[APP OneSignal] falha na inicialização:', error);
+        addDebugLog('ONESIGNAL ERROR', 'Falha na inicialização geral', error);
       }
     };
 
@@ -105,6 +207,37 @@ function App(props: { children: React.ReactNode }) {
       cancelled = true;
     };
   }, [currentUser?.id]);
+
+  // ========================================
+  // ETAPA 5: DIAGNÓSTICO ANDROID/PWA
+  // ========================================
+  useEffect(() => {
+    const isBrowser = typeof window !== 'undefined' && typeof document !== 'undefined';
+    if (!isBrowser) return;
+
+    const diagnose = () => {
+      const ua = String(window.navigator.userAgent || '');
+      const standalone = (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches) || (window.navigator as any).standalone === true;
+      const isAndroid = /Android/i.test(ua);
+      const isChrome = /Chrome|CriOS/i.test(ua);
+      
+      addDebugLog('PWA DIAGNÓSTICO', 'Diagnóstico completo:', {
+        standalone,
+        isAndroid,
+        isChrome,
+        notificationPermission: Notification?.permission,
+        serviceWorkerSupported: 'serviceWorker' in navigator,
+        pushManagerSupported: 'PushManager' in window,
+        visibilityState: document.visibilityState,
+        userAgent: ua.slice(0, 100),
+      });
+    };
+
+    diagnose();
+    document.addEventListener('visibilitychange', () => {
+      addDebugLog('PWA DIAGNÓSTICO', `visibilitychange: ${document.visibilityState}`);
+    });
+  }, []);
 
   useEffect(() => {
     return subscribeAppSettings((next) => setSettings(next));
@@ -133,6 +266,7 @@ function App(props: { children: React.ReactNode }) {
         const newItems = items.filter((n) => !previousIds.has(n.id));
         if (initialized && newItems.length) {
           const latest = newItems[0];
+          addDebugLog('NOTIFICAÇÃO LOCAL', 'Exibindo notificação local (fallback)', latest);
           showSystemNotification(latest.title, latest.body, {
             notificationId: latest.id,
             url: '/pages/admin/index',
@@ -171,6 +305,7 @@ function App(props: { children: React.ReactNode }) {
         const newItems = items.filter((n) => !previousIds.has(n.id));
         if (initialized && newItems.length) {
           const latest = newItems[0];
+          addDebugLog('NOTIFICAÇÃO LOCAL', 'Exibindo notificação local (fallback)', latest);
           showSystemNotification(latest.title, latest.body, {
             notificationId: latest.id,
             url: '/pages/booking/index',
@@ -224,6 +359,7 @@ function App(props: { children: React.ReactNode }) {
       isInstalledRef.current = true;
       installPromptRef.current = null;
       installedOnceRef.current = true;
+      addDebugLog('PWA DEBUG', 'Aplicativo instalado como PWA!');
       try {
         window.localStorage.setItem('gm.pwa.installedOnce', '1');
         window.localStorage.removeItem('gm.pwa.promptDontAskUntil');
@@ -283,7 +419,6 @@ function App(props: { children: React.ReactNode }) {
     };
   }, [currentUser?.email, currentUser?.id]);
 
-  // Equivalente ao onShow
   useDidShow(() => {
     const isBrowser = typeof window !== 'undefined' && typeof document !== 'undefined';
     if (!isBrowser) return;
@@ -339,7 +474,6 @@ function App(props: { children: React.ReactNode }) {
     })();
   });
 
-  // Equivalente ao onHide
   useDidHide(() => {});
 
   const theme = useAppStore((s) => s.theme);

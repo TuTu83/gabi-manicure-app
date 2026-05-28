@@ -7,7 +7,8 @@ export default defineAppConfig({
     'pages/index/index',
     'pages/booking/index',
     'pages/profile/index',
-    'pages/admin/index'
+    'pages/admin/index',
+    'pages/debug-push/index'
   ],
   window: {
     backgroundTextStyle: 'light',
