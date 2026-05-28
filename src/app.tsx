@@ -85,12 +85,6 @@ function App(props: { children: React.ReactNode }) {
         addDebugLog('FCM DEBUG', 'Registrando FCM...');
         await PushNotifications.register();
         addDebugLog('FCM DEBUG', 'Registro FCM concluído!');
-
-        // 3. Obter token atual (se já existir)
-        addDebugLog('FCM DEBUG', 'Obtendo token FCM atual...');
-        const tokenResult = await PushNotifications.getDeliveredNotifications();
-        // Nota: Para obter o token diretamente, algumas versões podem precisar de outro método
-        // Vamos confiar no listener 'registration' que é o método oficial
         
         addDebugLog('FCM DEBUG', 'Sistema FCM inicializado com sucesso!');
       } catch (err) {
@@ -103,6 +97,9 @@ function App(props: { children: React.ReactNode }) {
       const token = tokenResponse.value;
       addDebugLog('FCM DEBUG', 'Token FCM recebido!', { token: token.substring(0, 20) + '...' });
       fcmTokenRef.current = token;
+      
+      // Salvar token no store para o dashboard
+      (window as any).__DEBUG_PUSH.fcmToken = token;
       
       // Se o usuário já estiver logado, salva imediatamente
       if (currentUser?.id) {

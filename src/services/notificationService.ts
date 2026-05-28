@@ -37,17 +37,8 @@ function safeSetLocal(items: InAppNotification[]): void {
 
 export async function requestNotificationPermission(): Promise<void> {
   try {
-    if (process.env.TARO_ENV === 'h5') {
-      const anyWindow = window as any;
-      if (anyWindow?.Notification?.requestPermission) {
-        await anyWindow.Notification.requestPermission();
-      }
-      return;
-    }
-
-    if (process.env.TARO_ENV === 'weapp') {
-      await Taro.requestSubscribeMessage({ tmplIds: [] });
-    }
+    console.warn('[Notificacoes] Usando apenas Capacitor Push API');
+    return;
   } catch (error) {
     console.error('[Notificacoes] falha ao solicitar permissão', error);
   }
@@ -223,89 +214,9 @@ async function playNotificationSound(): Promise<void> {
 
 export async function showSystemNotification(title: string, body: string, options?: ShowNotificationOptions): Promise<void> {
   try {
-    if (process.env.TARO_ENV === 'h5') {
-      const anyWindow = window as any;
-      if (!anyWindow.Notification) {
-        console.warn('[Notificacoes] API Notification não disponível');
-        return;
-      }
-      if (anyWindow.Notification.permission !== 'granted') {
-        console.warn('[Notificacoes] permissão de notificações não concedida', anyWindow.Notification.permission);
-        return;
-      }
-
-      const notificationOptions: any = {
-        body,
-        icon: '/icon.svg',
-        badge: '/icon.svg',
-        silent: false,
-        renotify: true,
-        tag: options?.notificationId || `gm-notification-${Date.now()}`,
-        requireInteraction: true,
-        vibrate: [200, 100, 200],
-        timestamp: Date.now(),
-        data: {
-          url: options?.url || '/?notificationSource=gm',
-          appointmentId: options?.appointmentId,
-          notificationId: options?.notificationId,
-        },
-      };
-      if (options?.action) {
-        notificationOptions.actions = [
-          {
-            action: options.action,
-            title: 'Estou a caminho',
-          },
-        ];
-      }
-
-      let notificationDisplayed = false;
-      
-      if (navigator.serviceWorker) {
-        try {
-          const registration = await navigator.serviceWorker.ready;
-          if (registration?.showNotification) {
-            await registration.showNotification(title, notificationOptions);
-            notificationDisplayed = true;
-            console.log('[Notificacoes] exibida VIA SERVICE WORKER (PUSH REAL)');
-          }
-        } catch (error) {
-          console.error('[Notificacoes] ERRO CRÍTICO ao exibir via service worker', error);
-        }
-      }
-
-      if (!notificationDisplayed) {
-        console.warn('[Notificacoes] Service Worker indisponível, usando fallback');
-        try {
-          new Notification(title, notificationOptions);
-          notificationDisplayed = true;
-        } catch (error) {
-          console.error('[Notificacoes] falha no fallback', error);
-        }
-      }
-
-      if (notificationDisplayed) {
-        try {
-          if ('vibrate' in navigator) {
-            navigator.vibrate([200, 100, 200]);
-          }
-        } catch (error) {
-          console.warn('[Notificacoes] falha ao vibrar', error);
-        }
-        await playNotificationSound();
-        if (options?.notificationId) {
-          await markNotificationDelivered(options.notificationId);
-        }
-      }
-      return;
-    }
-
-    if (process.env.TARO_ENV === 'weapp') {
-      Taro.showToast({ title: body, icon: 'none' });
-      if (Taro.vibrateLong) {
-        Taro.vibrateLong();
-      }
-    }
+    console.log('[Notificacoes] Usando apenas Capacitor Push API para notificações', { title, body, options });
+    // Notificações locais no Android são tratadas via Capacitor Push API
+    // Para notificações locais, use o Firebase Admin SDK ou OneSignal
   } catch (error) {
     console.error('[Notificacoes] ERRO CRÍTICO no sistema de notificações', error);
   }
