@@ -153,6 +153,12 @@ function ProfilePage() {
           </View>
         ) : null}
 
+        <View className={styles.actionRow}>
+          <Button className={styles.actionBtn} onClick={() => Taro.navigateTo({ url: '/pages/debug-push/index' })}>
+            <Text className={styles.actionText}>🔧 Debug Push</Text>
+          </Button>
+        </View>
+
         <Button className={classnames(styles.btn, styles.btnPrimary)} onClick={handleLogout}>
           <Text className={styles.btnTextWhite}>Sair</Text>
         </Button>
