@@ -1,52 +1,7 @@
-importScripts('https://www.gstatic.com/firebasejs/10.12.5/firebase-app-compat.js');
-importScripts('https://www.gstatic.com/firebasejs/10.12.5/firebase-messaging-compat.js');
-
-self.GM_PWA_CACHE = 'gm-pwa-v5';
-
-const firebaseConfig = {
-  apiKey: 'AIzaSyB_KRIcmAHJsB2jpgeF7J6cV_HTT5phrg0',
-  authDomain: 'gabi-manicure.firebaseapp.com',
-  projectId: 'gabi-manicure',
-  storageBucket: 'gabi-manicure.firebasestorage.app',
-  messagingSenderId: '1040740111464',
-  appId: '1:1040740111464:web:58799fb48e7665059497dd'
-};
-
-try {
-  firebase.initializeApp(firebaseConfig);
-  const messaging = firebase.messaging();
-  
-  messaging.onBackgroundMessage((payload) => {
-    console.log('[SW FCM] Mensagem em background recebida:', payload);
-    const notificationTitle = payload.notification?.title || 'Gabi Manicure';
-    const notificationOptions = {
-      body: payload.notification?.body || 'Nova notificação',
-      icon: '/icon.svg',
-      badge: '/icon.svg',
-      silent: false,
-      renotify: true,
-      tag: payload.data?.tag || `gm-fcm-${Date.now()}`,
-      requireInteraction: true,
-      vibrate: [200, 100, 200],
-      data: payload.data || {}
-    };
-    if (payload.data?.action) {
-      notificationOptions.actions = [
-        {
-          action: payload.data.action,
-          title: 'Estou a caminho'
-        }
-      ];
-    }
-    self.registration.showNotification(notificationTitle, notificationOptions);
-  });
-
-} catch (e) {
-  console.warn('[SW FCM] Firebase não configurado, usando service worker básico');
-}
+self.GM_PWA_CACHE = 'gm-pwa-v6';
 
 self.addEventListener('install', (event) => {
-  console.log('[SW] Instalando Service Worker v5');
+  console.log('[SW] Instalando Service Worker v6');
   event.waitUntil(
     caches.open(self.GM_PWA_CACHE).then((cache) => {
       return cache.addAll(['/','/index.html','/manifest.webmanifest','/icon.svg']).catch(() => undefined);
@@ -56,7 +11,7 @@ self.addEventListener('install', (event) => {
 });
 
 self.addEventListener('activate', (event) => {
-  console.log('[SW] Ativando Service Worker v5');
+  console.log('[SW] Ativando Service Worker v6');
   event.waitUntil(
     Promise.all([
       caches
@@ -125,35 +80,4 @@ self.addEventListener('notificationclick', (event) => {
         return undefined;
       }),
   );
-});
-
-self.addEventListener('push', (event) => {
-  console.log('[SW] Push RECEBIDO!', event);
-  if (event.data) {
-    const data = event.data.json();
-    const title = data.title || 'Gabi Manicure';
-    const options = {
-      body: data.body || 'Nova notificação',
-      icon: '/icon.svg',
-      badge: '/icon.svg',
-      silent: false,
-      renotify: true,
-      tag: data.tag || `gm-push-${Date.now()}`,
-      requireInteraction: true,
-      vibrate: [200, 100, 200],
-      data: data.data || {}
-    };
-    if (data.action) {
-      options.actions = [
-        {
-          action: data.action,
-          title: 'Estou a caminho'
-        }
-      ];
-    }
-    console.log('[SW] Exibindo notificação via Service Worker', title, options);
-    event.waitUntil(
-      self.registration.showNotification(title, options)
-    );
-  }
 });
