@@ -6,6 +6,7 @@ import { fetchPromotions, fetchServices } from '@/services/catalogService';
 import { formatDateLabel, formatTime, markOnMyWay, subscribeUserAppointments } from '@/services/appointmentService';
 import { signOut as signOutService } from '@/services/authService';
 import { createNotification, maybeSendAppointmentReminder, maybeSendAppointmentStartNotification, requestNotificationPermission } from '@/services/notificationService';
+import { openAdminWhatsApp } from '@/services/whatsappService';
 import { useAppStore } from '@/store/appStore';
 import { getFirstName } from '@/utils/validators';
 import type { Appointment, Promotion, ServiceItem } from '@/types/booking';
@@ -74,7 +75,7 @@ function HomePage() {
           target: 'admin',
           type: 'cliente_a_caminho',
           title: 'Cliente a caminho',
-          body: `${targetAppointment.userName} informou que está a caminho.`,
+          body: `${targetAppointment.userName} está a caminho\n${targetAppointment.serviceName}\n${formatDateLabel(targetAppointment.startAt)} às ${formatTime(targetAppointment.startAt)}`,
           appointmentId,
         });
         Taro.showToast({ title: 'Aviso enviado', icon: 'success' });
@@ -155,17 +156,31 @@ function HomePage() {
             <Text className={styles.cardTitle}>Seu próximo horário</Text>
             <Text className={styles.cardDesc}>{nextAppointment ? 'Confirmar detalhes' : 'Em breve'}</Text>
           </View>
-          <Text className={styles.cardDesc}>
-            {nextAppointment
-              ? `${nextAppointment.serviceName} em ${formatDateLabel(nextAppointment.startAt)} às ${formatTime(
-                  nextAppointment.startAt,
-                )} • ${nextAppointment.professionalName}`
-              : 'Assim que você agendar, os detalhes aparecerão aqui.'}
-          </Text>
+          {nextAppointment ? (
+            <>
+              <Text className={styles.cardTitle}>{nextAppointment.serviceName}</Text>
+              <Text className={styles.cardDesc}>
+                {formatDateLabel(nextAppointment.startAt)} às {formatTime(nextAppointment.startAt)}
+                {nextAppointment.professionalName ? ` • ${nextAppointment.professionalName}` : ''}
+              </Text>
+            </>
+          ) : (
+            <Text className={styles.cardDesc}>Assim que você agendar, os detalhes aparecerão aqui.</Text>
+          )}
           <Button className={styles.primaryBtn} onClick={() => Taro.switchTab({ url: '/pages/booking/index' })}>
             <Text className={styles.primaryBtnText}>Agendar agora</Text>
           </Button>
         </View>
+
+        {settings.adminWhatsAppE164 ? (
+          <View className={styles.card}>
+            <Text className={styles.cardTitle}>Contato da manicure</Text>
+            <Text className={styles.cardDesc}>WhatsApp atualizado para atendimento e dúvidas.</Text>
+            <Button className={styles.secondaryBtn} onClick={() => openAdminWhatsApp()}>
+              <Text className={styles.secondaryBtnText}>{settings.adminWhatsAppE164}</Text>
+            </Button>
+          </View>
+        ) : null}
 
         <SectionHeader title="Promoções e avisos" />
         <ScrollView className={styles.promoScroll} scrollX>

@@ -1,4 +1,4 @@
-self.GM_PWA_CACHE = 'gm-pwa-v2';
+self.GM_PWA_CACHE = 'gm-pwa-v3';
 
 self.addEventListener('install', (event) => {
   event.waitUntil(
@@ -77,4 +77,26 @@ self.addEventListener('notificationclick', (event) => {
         return undefined;
       }),
   );
+});
+
+self.addEventListener('push', (event) => {
+  console.log('[SW] Push recebido', event);
+  if (event.data) {
+    const data = event.data.json();
+    const title = data.title || 'Gabi Manicure';
+    const options = {
+      body: data.body || 'Nova notificação',
+      icon: '/icon.svg',
+      badge: '/icon.svg',
+      silent: false,
+      renotify: true,
+      tag: data.tag || `gm-push-${Date.now()}`,
+      requireInteraction: true,
+      vibrate: [250, 100, 250],
+      data: data.data || {}
+    };
+    event.waitUntil(
+      self.registration.showNotification(title, options)
+    );
+  }
 });

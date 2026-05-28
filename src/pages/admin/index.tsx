@@ -25,7 +25,7 @@ import { endOfDayMs, fetchPaymentsRangeAll, fetchPaymentsRangeAggregate, fetchPa
 import { createNotification, requestNotificationPermission, showSystemNotification, subscribeAdminNotifications } from '@/services/notificationService';
 import { updateAppSettings } from '@/services/settingsService';
 import { uploadImageFromPath } from '@/services/uploadService';
-import { openWhatsAppToPhone } from '@/services/whatsappService';
+import { openAdminWhatsApp } from '@/services/whatsappService';
 import { useAppStore } from '@/store/appStore';
 import { formatPhoneBRDisplay } from '@/utils/validators';
 import type { Appointment, AppointmentStatus, InAppNotification, Professional, Promotion, ServiceItem } from '@/types/booking';
@@ -163,10 +163,6 @@ function AdminPage() {
   const [settingsWhatsApp, setSettingsWhatsApp] = useState(settings.adminWhatsAppE164);
   const [settingsOpenHour, setSettingsOpenHour] = useState(String(settings.businessHours.openHour));
   const [settingsCloseHour, setSettingsCloseHour] = useState(String(settings.businessHours.closeHour));
-  const [settingsPrimary, setSettingsPrimary] = useState(settings.theme.primary || '');
-  const [settingsPrimaryLight, setSettingsPrimaryLight] = useState(settings.theme.primaryLight || '');
-  const [settingsPrimaryDark, setSettingsPrimaryDark] = useState(settings.theme.primaryDark || '');
-  const [settingsAccent, setSettingsAccent] = useState(settings.theme.accent || '');
   const [settingsNotifications, setSettingsNotifications] = useState(settings.notificationsEnabled);
   const [settingsReminderMinutes, setSettingsReminderMinutes] = useState(String(settings.reminderMinutes || 120));
   const [settingsAllowDarkMode, setSettingsAllowDarkMode] = useState(Boolean(settings.allowDarkMode));
@@ -179,10 +175,6 @@ function AdminPage() {
     setSettingsWhatsApp(settings.adminWhatsAppE164);
     setSettingsOpenHour(String(settings.businessHours.openHour));
     setSettingsCloseHour(String(settings.businessHours.closeHour));
-    setSettingsPrimary(settings.theme.primary || '');
-    setSettingsPrimaryLight(settings.theme.primaryLight || '');
-    setSettingsPrimaryDark(settings.theme.primaryDark || '');
-    setSettingsAccent(settings.theme.accent || '');
     setSettingsNotifications(settings.notificationsEnabled);
     setSettingsReminderMinutes(String(settings.reminderMinutes || 120));
     setSettingsAllowDarkMode(Boolean(settings.allowDarkMode));
@@ -995,7 +987,7 @@ function AdminPage() {
           ? await uploadImageFromPath({ filePath: settingsBannerUrl, target: 'branding', fileNamePrefix: 'banner' })
           : settingsBannerUrl.trim() || undefined;
 
-      await updateAppSettings({
+      const updatedSettings = await updateAppSettings({
         appName,
         adminWhatsAppE164: settingsWhatsApp.trim(),
         businessHours: { openHour, closeHour },
@@ -1003,15 +995,10 @@ function AdminPage() {
         notificationsEnabled: settingsNotifications,
         reminderMinutes,
         allowDarkMode: settingsAllowDarkMode,
-        theme: {
-          primary: settingsPrimary.trim() || undefined,
-          primaryLight: settingsPrimaryLight.trim() || undefined,
-          primaryDark: settingsPrimaryDark.trim() || undefined,
-          accent: settingsAccent.trim() || undefined,
-        },
         logoUrl,
         bannerUrls: bannerUrl ? [bannerUrl] : [],
       });
+      setSettings(updatedSettings);
       if (currentUser) {
         createAdminLog({
           actor: currentUser,
@@ -1295,15 +1282,7 @@ function AdminPage() {
               </View>
               <View className={styles.summaryCard}>
                 <Text className={styles.statLabel}>Faturamento diário</Text>
-                <Text className={styles.statValue}>{priceFromCents(financeOverview.daily)}</Text>
-              </View>
-              <View className={styles.summaryCard}>
-                <Text className={styles.statLabel}>Faturamento semanal</Text>
-                <Text className={styles.statValue}>{priceFromCents(financeOverview.weekly)}</Text>
-              </View>
-              <View className={styles.summaryCard}>
-                <Text className={styles.statLabel}>Faturamento mensal</Text>
-                <Text className={styles.statValue}>{priceFromCents(financeOverview.monthly)}</Text>
+                <Text className={styles.statValue}>{priceFromCents(stats.faturamentoDia)}</Text>
               </View>
               <View className={styles.summaryCard}>
                 <Text className={styles.statLabel}>Clientes cadastrados</Text>
@@ -1694,11 +1673,11 @@ function AdminPage() {
                   <View key={u.id} className={styles.listItem} onClick={() => openClientEditor(u)}>
                     <Text className={styles.listTitle}>{u.socialName || u.fullName}</Text>
                     <Text className={styles.listSub}>e-mail: {u.email || 'sem e-mail'}</Text>
-                    <View className={styles.waRow} onClick={(e) => { e.stopPropagation(); if (u.phoneE164) openWhatsAppToPhone(u.phoneE164); }}>
+                    <View className={styles.waRow} onClick={(e) => { e.stopPropagation(); openAdminWhatsApp(); }}>
                       <View className={styles.waIcon}>
                         <Text className={styles.waIconText}>W</Text>
                       </View>
-                      <Text className={styles.waValue}>{u.phoneE164 ? formatPhoneBRDisplay(u.phoneE164) : 'telefone não informado'}</Text>
+                      <Text className={styles.waValue}>{settings.adminWhatsAppE164 ? formatPhoneBRDisplay(settings.adminWhatsAppE164) : 'WhatsApp não configurado'}</Text>
                     </View>
                     <View className={styles.badgeRow}>
                       {u.vip ? (
@@ -1723,7 +1702,7 @@ function AdminPage() {
 
           <AdminAccordion
             title="Configurações administrativas"
-            subtitle="Nome do app, cores, horário de funcionamento, WhatsApp e notificações."
+            subtitle="Nome do app, WhatsApp, horário de funcionamento e notificações."
             open={open.settings}
             onToggle={() => setOpen((p) => ({ ...p, settings: !p.settings }))}
           >
@@ -1826,23 +1805,6 @@ function AdminPage() {
               })}
             </View>
 
-            <Text className={styles.fieldLabel}>Cores principais (hex)</Text>
-            <View className={styles.row}>
-              <View className={styles.inputRow} style={{ flex: 1 }}>
-                <Input className={styles.input} value={settingsPrimary} onInput={(e) => setSettingsPrimary(e.detail.value)} placeholder="#e8558f" />
-              </View>
-              <View className={styles.inputRow} style={{ flex: 1 }}>
-                <Input className={styles.input} value={settingsAccent} onInput={(e) => setSettingsAccent(e.detail.value)} placeholder="#c9a227" />
-              </View>
-            </View>
-            <View className={styles.row}>
-              <View className={styles.inputRow} style={{ flex: 1 }}>
-                <Input className={styles.input} value={settingsPrimaryLight} onInput={(e) => setSettingsPrimaryLight(e.detail.value)} placeholder="#ff7fb3" />
-              </View>
-              <View className={styles.inputRow} style={{ flex: 1 }}>
-                <Input className={styles.input} value={settingsPrimaryDark} onInput={(e) => setSettingsPrimaryDark(e.detail.value)} placeholder="#c73774" />
-              </View>
-            </View>
 
             <Text className={styles.fieldLabel}>Notificações</Text>
             <View className={styles.row}>

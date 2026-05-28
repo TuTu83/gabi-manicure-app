@@ -11,7 +11,7 @@ const localKey = 'gm.appSettings';
 export function getDefaultSettings(): AppSettings {
   return {
     appName: 'Gabi Manicure',
-    adminWhatsAppE164: '+5500000000000',
+    adminWhatsAppE164: '',
     businessHours: { openHour: 9, closeHour: 19 },
     workingDays: [1, 2, 3, 4, 5, 6],
     notificationsEnabled: true,

@@ -225,18 +225,29 @@ export async function showSystemNotification(title: string, body: string, option
   try {
     if (process.env.TARO_ENV === 'h5') {
       const anyWindow = window as any;
-      if (!anyWindow.Notification || anyWindow.Notification.permission !== 'granted') return;
+      if (!anyWindow.Notification) {
+        console.warn('[Notificacoes] API Notification não disponível');
+        return;
+      }
+      if (anyWindow.Notification.permission !== 'granted') {
+        console.warn('[Notificacoes] permissão de notificações não concedida', anyWindow.Notification.permission);
+        return;
+      }
+
       const notificationOptions: any = {
         body,
         icon: '/icon.svg',
         badge: '/icon.svg',
+        silent: false,
         renotify: true,
-        tag: `gm-notification-${Date.now()}`,
-        requireInteraction: false,
-        vibrate: [120, 50, 120],
+        tag: options?.notificationId || `gm-notification-${Date.now()}`,
+        requireInteraction: true,
+        vibrate: [250, 100, 250],
+        timestamp: Date.now(),
         data: {
           url: options?.url || '/?notificationSource=gm',
           appointmentId: options?.appointmentId,
+          notificationId: options?.notificationId,
         },
       };
       if (options?.action) {
@@ -248,23 +259,43 @@ export async function showSystemNotification(title: string, body: string, option
         ];
       }
 
+      let notificationDisplayed = false;
+      
       if (navigator.serviceWorker && navigator.serviceWorker.ready) {
-        const registration = await navigator.serviceWorker.ready;
-        if (registration?.showNotification) {
-          registration.showNotification(title, notificationOptions).catch(() => undefined);
-        } else {
-          new Notification(title, notificationOptions);
+        try {
+          const registration = await navigator.serviceWorker.ready;
+          if (registration?.showNotification) {
+            await registration.showNotification(title, notificationOptions);
+            notificationDisplayed = true;
+            console.log('[Notificacoes] exibida via service worker');
+          }
+        } catch (error) {
+          console.warn('[Notificacoes] falha ao exibir via service worker', error);
         }
-      } else {
-        new Notification(title, notificationOptions);
       }
 
-      if (navigator.vibrate) {
-        navigator.vibrate([120, 50, 120]);
+      if (!notificationDisplayed) {
+        try {
+          new Notification(title, notificationOptions);
+          notificationDisplayed = true;
+          console.log('[Notificacoes] exibida diretamente');
+        } catch (error) {
+          console.warn('[Notificacoes] falha ao exibir notificação direta', error);
+        }
       }
-      await playNotificationSound();
-      if (options?.notificationId) {
-        await markNotificationDelivered(options.notificationId);
+
+      if (notificationDisplayed) {
+        try {
+          if ('vibrate' in navigator) {
+            navigator.vibrate([250, 100, 250]);
+          }
+        } catch (error) {
+          console.warn('[Notificacoes] falha ao vibrar', error);
+        }
+        await playNotificationSound();
+        if (options?.notificationId) {
+          await markNotificationDelivered(options.notificationId);
+        }
       }
       return;
     }
@@ -339,7 +370,7 @@ export async function maybeSendAppointmentReminder(userId: string, appointments:
         targetUserId: userId,
         type: 'lembrete_agendamento',
         title: 'Seu horário está chegando 💅',
-        body: `Você possui atendimento agendado hoje às ${new Date(target.startAt).toLocaleTimeString('pt-BR', {
+        body: `Agendamento hoje\n${new Date(target.startAt).toLocaleTimeString('pt-BR', {
           hour: '2-digit',
           minute: '2-digit',
         })}.`,
@@ -349,7 +380,7 @@ export async function maybeSendAppointmentReminder(userId: string, appointments:
         target: 'admin',
         type: 'lembrete_agendamento',
         title: 'Lembrete de atendimento',
-        body: `Nova cliente confirmada para hoje às ${new Date(target.startAt).toLocaleTimeString('pt-BR', {
+        body: `Nova cliente confirmada\npara hoje às ${new Date(target.startAt).toLocaleTimeString('pt-BR', {
           hour: '2-digit',
           minute: '2-digit',
         })}.`,
@@ -398,11 +429,11 @@ export async function maybeSendAppointmentStartNotification(userId: string, appo
       targetUserId: userId,
       type: 'inicio_agendamento',
       title: 'Seu atendimento começou 💅',
-      body: `Clique em 'Estou a caminho' para avisar a manicure.`,
+      body: `Seu atendimento começou 💅\nClique em 'Estou a caminho' para avisar a manicure.`,
       appointmentId: target.id,
     });
     safeSetStartReminderIds([target.id, ...sent].slice(0, 50));
-    await showSystemNotification('Seu atendimento começou 💅', "Clique em 'Estou a caminho' para avisar a manicure.", {
+    await showSystemNotification('Seu atendimento começou 💅', `Seu atendimento começou 💅\nClique em 'Estou a caminho' para avisar a manicure.`, {
       appointmentId: target.id,
       notificationId: clientNotificationId,
       url: `/?notificationAction=on_my_way&appointmentId=${target.id}`,

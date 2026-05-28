@@ -336,9 +336,9 @@ function BookingPage() {
         target: 'admin',
         type: 'confirmacao_agendamento',
         title: 'Novo agendamento',
-        body: `${appointment.userName} solicitou: ${appointment.serviceName} • Total ${priceFromCents(
+        body: `${appointment.userName} solicitou:\n${appointment.serviceName}\nTotal ${priceFromCents(
           appointment.priceCents || 0,
-        )} • ${paymentMethod.toUpperCase()} • ${formatDateLabel(appointment.startAt)} às ${formatTime(appointment.startAt)}.`,
+        )}\nPagamento: ${paymentMethod.toUpperCase()}\n${formatDateLabel(appointment.startAt)} às ${formatTime(appointment.startAt)}`,
         appointmentId: appointment.id,
       });
 
@@ -368,9 +368,9 @@ function BookingPage() {
           target: 'admin',
           type: 'cancelamento_agendamento',
           title: 'Agendamento cancelado',
-          body: `${selectedAppointment.userName} cancelou ${selectedAppointment.serviceName} em ${formatDateLabel(
+          body: `${selectedAppointment.userName} cancelou:\n${selectedAppointment.serviceName}\n${formatDateLabel(
             selectedAppointment.startAt,
-          )} às ${formatTime(selectedAppointment.startAt)}.`,
+          )} às ${formatTime(selectedAppointment.startAt)}`,
           appointmentId: selectedAppointment.id,
         }),
         createNotification({
@@ -402,7 +402,7 @@ function BookingPage() {
         target: 'admin',
         type: 'cliente_a_caminho',
         title: 'Cliente a caminho',
-        body: `${selectedAppointment.userName} informou que está a caminho.`,
+        body: `${selectedAppointment.userName} está a caminho\n${selectedAppointment.serviceName}\n${formatDateLabel(selectedAppointment.startAt)} às ${formatTime(selectedAppointment.startAt)}`,
         appointmentId: selectedAppointment.id,
       });
       Taro.showToast({ title: 'Aviso enviado', icon: 'success' });
@@ -446,7 +446,7 @@ function BookingPage() {
           target: 'admin',
           type: 'alteracao_agendamento',
           title: 'Reagendamento solicitado',
-          body: `${selectedAppointment.userName} solicitou reagendar para ${formatDateLabel(startAt)} às ${formatTime(startAt)}.`,
+          body: `${selectedAppointment.userName} solicitou reagendar:\n${selectedAppointment.serviceName}\npara ${formatDateLabel(startAt)} às ${formatTime(startAt)}`,
           appointmentId: selectedAppointment.id,
         }),
         createNotification({

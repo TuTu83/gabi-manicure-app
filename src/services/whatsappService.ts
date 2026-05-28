@@ -28,7 +28,8 @@ export async function openWhatsAppToPhone(phoneE164: string): Promise<void> {
 
 export async function openAdminWhatsApp(): Promise<void> {
   const phoneE164 = getLocalSettings().adminWhatsAppE164;
-  if (!digitsOnly(phoneE164)) {
+  const digits = digitsOnly(phoneE164);
+  if (!digits || digits === '5500000000000') {
     Taro.showToast({ title: 'WhatsApp não configurado', icon: 'none' });
     return;
   }

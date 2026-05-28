@@ -4,6 +4,7 @@ import Taro, { useDidShow, useDidHide } from '@tarojs/taro';
 import classnames from 'classnames';
 import { useAppStore } from '@/store/appStore';
 import { isAdminUser } from '@/services/adminService';
+import { requestNotificationPermission, showSystemNotification, subscribeAdminNotifications, subscribeNotificationsForUser } from '@/services/notificationService';
 import { subscribeAppSettings } from '@/services/settingsService';
 // Estilos globais
 import './app.scss';
@@ -19,8 +20,97 @@ function App(props: { children: React.ReactNode }) {
   const installedOnceRef = useRef(false);
 
   useEffect(() => {
+    const isBrowser = typeof window !== 'undefined' && typeof document !== 'undefined';
+    if (!isBrowser) return;
+    if (process.env.TARO_ENV !== 'h5') return;
+    if (!('serviceWorker' in navigator)) return;
+    navigator.serviceWorker.register('/sw.js').catch((err) => {
+      console.warn('[PWA] falha ao registrar service worker', err);
+    });
+  }, []);
+
+  useEffect(() => {
     return subscribeAppSettings((next) => setSettings(next));
   }, [setSettings]);
+
+  useEffect(() => {
+    const isBrowser = typeof window !== 'undefined' && typeof document !== 'undefined';
+    if (!isBrowser) return;
+    if (process.env.TARO_ENV !== 'h5') return;
+    if (!currentUser) return;
+
+    let unsub: (() => void) | null = null;
+    let initialized = false;
+    const run = async () => {
+      const isAdmin = await isAdminUser(currentUser || null);
+      if (!isAdmin) return;
+      const path = String(window.location.pathname || '');
+      if (path.includes('/pages/admin/index')) return;
+      if (settings.notificationsEnabled && window.Notification && window.Notification.permission === 'default') {
+        await requestNotificationPermission();
+      }
+
+      const previousIds = new Set<string>();
+      unsub = subscribeAdminNotifications((items) => {
+        if (!settings.notificationsEnabled) return;
+        const newItems = items.filter((n) => !previousIds.has(n.id));
+        if (initialized && newItems.length) {
+          const latest = newItems[0];
+          showSystemNotification(latest.title, latest.body, {
+            notificationId: latest.id,
+            url: '/pages/admin/index',
+          });
+        }
+        previousIds.clear();
+        items.forEach((n) => previousIds.add(n.id));
+        initialized = true;
+      });
+    };
+
+    run().catch(() => undefined);
+    return () => {
+      if (unsub) unsub();
+    };
+  }, [currentUser, settings.notificationsEnabled]);
+
+  useEffect(() => {
+    const isBrowser = typeof window !== 'undefined' && typeof document !== 'undefined';
+    if (!isBrowser) return;
+    if (process.env.TARO_ENV !== 'h5') return;
+    if (!currentUser) return;
+
+    let unsub: (() => void) | null = null;
+    let initialized = false;
+    const run = async () => {
+      const isAdmin = await isAdminUser(currentUser || null);
+      if (isAdmin) return;
+      if (settings.notificationsEnabled && window.Notification && window.Notification.permission === 'default') {
+        await requestNotificationPermission();
+      }
+
+      const previousIds = new Set<string>();
+      unsub = subscribeNotificationsForUser(currentUser.id, (items) => {
+        if (!settings.notificationsEnabled) return;
+        const newItems = items.filter((n) => !previousIds.has(n.id));
+        if (initialized && newItems.length) {
+          const latest = newItems[0];
+          showSystemNotification(latest.title, latest.body, {
+            notificationId: latest.id,
+            url: '/pages/booking/index',
+            appointmentId: latest.appointmentId,
+          });
+        }
+        previousIds.clear();
+        items.forEach((n) => previousIds.add(n.id));
+        initialized = true;
+      });
+    };
+
+    run().catch(() => undefined);
+    return () => {
+      if (unsub) unsub();
+    };
+  }, [currentUser, settings.notificationsEnabled]);
 
   useEffect(() => {
     const isBrowser = typeof window !== 'undefined' && typeof document !== 'undefined';

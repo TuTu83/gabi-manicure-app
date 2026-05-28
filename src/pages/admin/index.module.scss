@@ -101,13 +101,29 @@
 }
 
 .summaryCard {
-  flex: 1 1 calc(50% - 8rpx);
-  min-width: 180rpx;
+  flex: 1 1 220rpx;
+  min-width: 220rpx;
   border-radius: $radius-xl;
   border: 1rpx solid var(--color-border);
   background: var(--color-bg-card);
   box-shadow: $shadow-card;
   padding: 24rpx;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+}
+
+.listTitle,
+.listSub,
+.clientLine {
+  display: block;
+}
+
+.listSub {
+  font-size: 24rpx;
+  color: var(--color-text-tertiary);
+  line-height: $line-height-loose;
+  white-space: pre-wrap;
 }
 
 .sectionHeader {
@@ -270,6 +286,7 @@
   font-size: 34rpx;
   font-weight: $font-weight-semibold;
   color: var(--color-text-primary);
+  margin-top: 12rpx;
 }
 
 .row {
