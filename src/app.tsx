@@ -62,17 +62,64 @@ function App(props: { children: React.ReactNode }) {
   // 1. Inicializar FCM Capacitor (sem depender de currentUser)
   // ========================================
   useEffect(() => {
-    const isNative = Capacitor.isNativePlatform();
-    addDebugLog('FCM DEBUG', `Ambiente nativo: ${isNative}`);
-    
-    if (!isNative) {
-      addDebugLog('FCM INFO', 'App rodando em Web, FCM Nativo não disponível');
-      return;
-    }
+    let tokenListener: any = null;
+    let errorListener: any = null;
+    let notificationListener: any = null;
+    let actionListener: any = null;
 
-    const initializeFCM = async () => {
+    const setupFCM = async () => {
       try {
-        // 1. Solicitar permissão
+        const isNative = Capacitor.isNativePlatform();
+        addDebugLog('FCM DEBUG', `Ambiente nativo: ${isNative}`);
+        
+        if (!isNative) {
+          addDebugLog('FCM INFO', 'App rodando em Web, FCM Nativo não disponível');
+          return;
+        }
+
+        // 1. Adicionar listeners primeiro para não perder eventos
+        addDebugLog('FCM DEBUG', 'Adicionando listeners...');
+        
+        // Listener para token de registro
+        tokenListener = await PushNotifications.addListener('registration', async (tokenResponse) => {
+          try {
+            const token = tokenResponse.value;
+            addDebugLog('FCM DEBUG', 'Token FCM recebido!', { token: token.substring(0, 20) + '...' });
+            fcmTokenRef.current = token;
+            
+            // Salvar token no store para o dashboard
+            (window as any).__DEBUG_PUSH.fcmToken = token;
+            
+            // Se o usuário já estiver logado, salva imediatamente
+            if (currentUser?.id) {
+              addDebugLog('FCM DEBUG', 'Usuário já está logado, salvando token...');
+              await saveTokenToFirestore(token, currentUser.id);
+            } else {
+              addDebugLog('FCM DEBUG', 'Usuário não está logado, armazenando token para depois...');
+            }
+          } catch (err) {
+            addDebugLog('FCM ERROR', 'Erro ao processar token FCM', err);
+          }
+        });
+
+        // Listener para erro de registro
+        errorListener = await PushNotifications.addListener('registrationError', (error) => {
+          addDebugLog('FCM ERROR', 'Erro no registro FCM', error);
+        });
+
+        // Listener para notificações recebidas em foreground
+        notificationListener = await PushNotifications.addListener('pushNotificationReceived', (notification) => {
+          addDebugLog('FCM DEBUG', 'NOTIFICAÇÃO RECEBIDA (FOREGROUND)!', notification);
+          (window as any).__DEBUG_PUSH.lastReceived = notification;
+        });
+
+        // Listener para notificações clicadas/abertas
+        actionListener = await PushNotifications.addListener('pushNotificationActionPerformed', (action) => {
+          addDebugLog('FCM DEBUG', 'NOTIFICAÇÃO CLICADA/ABERTA!', action);
+          (window as any).__DEBUG_PUSH.lastReceived = action;
+        });
+
+        // 2. Solicitar permissão
         addDebugLog('FCM DEBUG', 'Solicitando permissão de notificações...');
         const permStatus = await PushNotifications.requestPermissions();
         
@@ -83,60 +130,29 @@ function App(props: { children: React.ReactNode }) {
         
         addDebugLog('FCM DEBUG', 'Permissão de notificações CONCEDIDA!');
 
-        // 2. Registrar push notifications
+        // 3. Registrar push notifications
         addDebugLog('FCM DEBUG', 'Registrando FCM...');
         await PushNotifications.register();
         addDebugLog('FCM DEBUG', 'Registro FCM concluído!');
         
         addDebugLog('FCM DEBUG', 'Sistema FCM inicializado com sucesso!');
       } catch (err) {
-        addDebugLog('FCM ERROR', 'Erro ao inicializar FCM', err);
+        addDebugLog('FCM ERROR', 'Erro ao configurar FCM', err);
       }
     };
 
-    // 4. Listener para token de registro (será chamado quando o token for gerado/atualizado)
-    const tokenListener = PushNotifications.addListener('registration', async (tokenResponse) => {
-      const token = tokenResponse.value;
-      addDebugLog('FCM DEBUG', 'Token FCM recebido!', { token: token.substring(0, 20) + '...' });
-      fcmTokenRef.current = token;
-      
-      // Salvar token no store para o dashboard
-      (window as any).__DEBUG_PUSH.fcmToken = token;
-      
-      // Se o usuário já estiver logado, salva imediatamente
-      if (currentUser?.id) {
-        addDebugLog('FCM DEBUG', 'Usuário já está logado, salvando token...');
-        await saveTokenToFirestore(token, currentUser.id);
-      } else {
-        addDebugLog('FCM DEBUG', 'Usuário não está logado, armazenando token para depois...');
-      }
-    });
-
-    // 5. Listener para erro de registro
-    const errorListener = PushNotifications.addListener('registrationError', (error) => {
-      addDebugLog('FCM ERROR', 'Erro no registro FCM', error);
-    });
-
-    // 6. Listener para notificações recebidas em foreground
-    const notificationListener = PushNotifications.addListener('pushNotificationReceived', (notification) => {
-      addDebugLog('FCM DEBUG', 'NOTIFICAÇÃO RECEBIDA (FOREGROUND)!', notification);
-      (window as any).__DEBUG_PUSH.lastReceived = notification;
-    });
-
-    // 7. Listener para notificações clicadas/abertas
-    const actionListener = PushNotifications.addListener('pushNotificationActionPerformed', (action) => {
-      addDebugLog('FCM DEBUG', 'NOTIFICAÇÃO CLICADA/ABERTA!', action);
-      (window as any).__DEBUG_PUSH.lastReceived = action;
-    });
-
-    initializeFCM();
+    setupFCM();
 
     // Cleanup listeners ao desmontar
     return () => {
-      tokenListener.remove();
-      errorListener.remove();
-      notificationListener.remove();
-      actionListener.remove();
+      try {
+        if (tokenListener) tokenListener.remove();
+        if (errorListener) errorListener.remove();
+        if (notificationListener) notificationListener.remove();
+        if (actionListener) actionListener.remove();
+      } catch (err) {
+        addDebugLog('FCM ERROR', 'Erro ao limpar listeners', err);
+      }
     };
   }, []);
 
