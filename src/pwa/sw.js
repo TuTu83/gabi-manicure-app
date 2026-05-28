@@ -4,12 +4,12 @@ importScripts('https://www.gstatic.com/firebasejs/10.12.5/firebase-messaging-com
 self.GM_PWA_CACHE = 'gm-pwa-v5';
 
 const firebaseConfig = {
-  apiKey: 'AIzaSyC7w5V4GQ9fK7o4n2a3l6o9q8w5e7r4t3y2u1i0o9p8a7s6d5f',
+  apiKey: 'AIzaSyB_KRIcmAHJsB2jpgeF7J6cV_HTT5phrg0',
   authDomain: 'gabi-manicure.firebaseapp.com',
   projectId: 'gabi-manicure',
-  storageBucket: 'gabi-manicure.appspot.com',
-  messagingSenderId: '123456789012',
-  appId: '1:123456789012:web:a1b2c3d4e5f6a7b8c9d0e1f'
+  storageBucket: 'gabi-manicure.firebasestorage.app',
+  messagingSenderId: '1040740111464',
+  appId: '1:1040740111464:web:58799fb48e7665059497dd'
 };
 
 try {

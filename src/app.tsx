@@ -3,13 +3,13 @@ import { View } from '@tarojs/components';
 import Taro, { useDidShow, useDidHide } from '@tarojs/taro';
 import classnames from 'classnames';
 import { useAppStore } from '@/store/appStore';
-import { isAdminUser } from '@/services/adminService';
-import { requestNotificationPermission, showSystemNotification, subscribeAdminNotifications } from '@/services/notificationService';
+import { isAdminUser, updateUserFcmToken } from '@/services/adminService';
+import { requestNotificationPermission, showSystemNotification, subscribeAdminNotifications, subscribeNotificationsForUser } from '@/services/notificationService';
 import { subscribeAppSettings } from '@/services/settingsService';
-import { getFcmToken, onFcmMessage } from '@/services/firebase';
-import { updateUserFcmToken } from '@/services/adminService';
 // Estilos globais
 import './app.scss';
+
+const ONESIGNAL_APP_ID = '82892143-d160-4756-8b63-327b8f69a41e';
 
 function App(props: { children: React.ReactNode }) {
   // Pode usar todos os React Hooks
@@ -26,8 +26,10 @@ function App(props: { children: React.ReactNode }) {
     if (!isBrowser) return;
     if (process.env.TARO_ENV !== 'h5') return;
     if (!('serviceWorker' in navigator)) return;
-    navigator.serviceWorker.register('/sw.js').catch((err) => {
-      console.warn('[PWA] falha ao registrar service worker', err);
+
+    // Registra o Service Worker do OneSignal
+    navigator.serviceWorker.register('/OneSignalSDKWorker.js').catch((err) => {
+      console.warn('[PWA] falha ao registrar service worker do OneSignal', err);
     });
   }, []);
 
@@ -39,33 +41,66 @@ function App(props: { children: React.ReactNode }) {
 
     let cancelled = false;
 
-    const initFcm = async () => {
+    const initOneSignal = async () => {
       try {
-        console.log('[APP] Inicializando FCM...');
-        const token = await getFcmToken();
-        if (token && !cancelled) {
-          console.log('[APP FCM] Token obtido:', token.substring(0, 20) + '...');
-          await updateUserFcmToken(currentUser.id, token);
-        }
+        console.log('[APP] Inicializando OneSignal...');
 
-        const unsubFcm = onFcmMessage((payload) => {
-          console.log('[APP FCM] Mensagem em foreground recebida:', payload);
-          const title = payload.notification?.title || 'Gabi Manicure';
-          const body = payload.notification?.body || 'Nova notificação';
-          showSystemNotification(title, body, {
-            notificationId: payload.data?.notificationId,
-            url: payload.data?.url,
-            appointmentId: payload.data?.appointmentId,
+        // Adiciona o script do OneSignal via CDN
+        const script = document.createElement('script');
+        script.src = 'https://cdn.onesignal.com/sdks/web/v16/OneSignalSDK.page.js';
+        script.defer = true;
+        script.async = true;
+        document.head.appendChild(script);
+
+        script.onload = async () => {
+          if (cancelled) return;
+          
+          // Inicializa o OneSignal
+          const OneSignal = (window as any).OneSignal || [];
+          OneSignal.push(function() {
+            OneSignal.init({
+              appId: ONESIGNAL_APP_ID,
+              serviceWorkerParam: {
+                scope: '/OneSignalSDKWorker.js'
+              },
+              serviceWorkerPath: 'OneSignalSDKWorker.js',
+              notifyButton: {
+                enable: false
+              }
+            });
+
+            // Quando o usuário se inscreve, salva o player ID
+            OneSignal.on('subscriptionChange', async (isSubscribed: boolean) => {
+              if (isSubscribed && !cancelled) {
+                const playerId = await OneSignal.getUserId();
+                if (playerId) {
+                  console.log('[OneSignal] Player ID:', playerId);
+                  // Salva o player ID no Firestore como fcmToken (para compatibilidade)
+                  await updateUserFcmToken(currentUser.id, playerId);
+                }
+              }
+            });
+
+            // Listener para notificações em foreground
+            OneSignal.on('notificationDisplay', (event: any) => {
+              console.log('[OneSignal] Notificação em foreground recebida:', event);
+            });
+
+            // Listener para clique na notificação
+            OneSignal.on('notificationOpened', (event: any) => {
+              console.log('[OneSignal] Notificação clicada:', event);
+              if (event?.url) {
+                window.location.href = event.url;
+              }
+            });
           });
-        });
-
-        return unsubFcm;
+        };
       } catch (error) {
-        console.error('[APP FCM] falha na inicialização:', error);
+        console.error('[APP OneSignal] falha na inicialização:', error);
       }
     };
 
-    initFcm();
+    initOneSignal();
     return () => {
       cancelled = true;
     };

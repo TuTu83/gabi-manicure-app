@@ -13,12 +13,14 @@ import {
   setDoc,
   updateDoc,
   where,
+  getDoc,
 } from 'firebase/firestore';
 import { getFirebaseDb, isFirebaseConfigured } from '@/services/firebase';
 import { removeUndefinedFields } from '@/services/firebase';
 import { getLocalSettings } from '@/services/settingsService';
 import { consumeRateLimit } from '@/services/storage';
 import { ensurePaymentForFinalizedAppointment } from '@/services/financeService';
+import { sendOneSignalNotification } from '@/services/oneSignalService';
 import type { Appointment, AppointmentReview, AppointmentStatus, LoyaltySummary, WaitlistEntry } from '@/types/booking';
 import type { PaymentMethod } from '@/types/finance';
 import type { UserProfile } from '@/types/user';
@@ -26,6 +28,42 @@ import type { UserProfile } from '@/types/user';
 const appointmentsKey = 'gm.appointments';
 const reviewsKey = 'gm.reviews';
 const waitlistKey = 'gm.waitlist';
+
+async function getAdminPlayerId(): Promise<string | null> {
+  try {
+    const db = getFirebaseDb();
+    if (!db) return null;
+    
+    const q = query(collection(db, 'users'), where('role', '==', 'admin'), limit(1));
+    const snap = await getDocs(q);
+    
+    if (!snap.empty) {
+      const adminData = snap.docs[0].data() as UserProfile;
+      return adminData.fcmToken || null;
+    }
+    return null;
+  } catch (error) {
+    console.error('Error getting admin player ID:', error);
+    return null;
+  }
+}
+
+async function getUserPlayerId(userId: string): Promise<string | null> {
+  try {
+    const db = getFirebaseDb();
+    if (!db) return null;
+    
+    const userDoc = await getDoc(doc(db, 'users', userId));
+    if (userDoc.exists()) {
+      const userData = userDoc.data() as UserProfile;
+      return userData.fcmToken || null;
+    }
+    return null;
+  } catch (error) {
+    console.error('Error getting user player ID:', error);
+    return null;
+  }
+}
 
 type Unsubscribe = () => void;
 
@@ -282,6 +320,43 @@ export async function createAppointment(input: Omit<Appointment, 'id' | 'created
     return { id: ref.id, ...(payload as any) };
   });
 
+  // Send OneSignal notifications
+  try {
+    const adminPlayerId = await getAdminPlayerId();
+    const clientPlayerId = await getUserPlayerId(input.userId);
+    
+    const dateStr = dayjs(startAt).format('DD/MM/YYYY');
+    const timeStr = dayjs(startAt).format('HH:mm');
+    
+    if (adminPlayerId) {
+      await sendOneSignalNotification({
+        title: 'Novo Agendamento!',
+        body: `${input.clientName} agendou para ${dateStr} às ${timeStr}`,
+        playerIds: [adminPlayerId],
+        data: {
+          type: 'new_appointment',
+          appointmentId: appointment.id,
+          url: '/pages/admin/index',
+        },
+      });
+    }
+    
+    if (clientPlayerId) {
+      await sendOneSignalNotification({
+        title: 'Agendamento Confirmado!',
+        body: `Seu agendamento para ${dateStr} às ${timeStr} foi confirmado!`,
+        playerIds: [clientPlayerId],
+        data: {
+          type: 'appointment_confirmed',
+          appointmentId: appointment.id,
+          url: '/pages/booking/index',
+        },
+      });
+    }
+  } catch (error) {
+    console.error('Error sending OneSignal notifications for new appointment:', error);
+  }
+
   return appointment;
 }
 
@@ -302,11 +377,62 @@ export async function cancelAppointment(appointmentId: string): Promise<void> {
 
   const db = getFirebaseDb();
   if (!db) throw new Error('Firebase indisponível');
+  
+  // First get the appointment data to get details for notification
+  let appointmentData: Appointment | null = null;
+  try {
+    const appointmentDoc = await getDoc(doc(db, 'appointments', appointmentId));
+    if (appointmentDoc.exists()) {
+      appointmentData = { id: appointmentDoc.id, ...(appointmentDoc.data() as Omit<Appointment, 'id'>) };
+    }
+  } catch (error) {
+    console.error('Error getting appointment for cancellation notification:', error);
+  }
+
   await updateDoc(doc(db, 'appointments', appointmentId), {
     status: 'cancelado',
     canceledAt: Date.now(),
     updatedAt: Date.now(),
   });
+
+  // Send OneSignal notifications for cancellation
+  if (appointmentData) {
+    try {
+      const adminPlayerId = await getAdminPlayerId();
+      const clientPlayerId = await getUserPlayerId(appointmentData.userId);
+      
+      const dateStr = dayjs(appointmentData.startAt).format('DD/MM/YYYY');
+      const timeStr = dayjs(appointmentData.startAt).format('HH:mm');
+      
+      if (adminPlayerId) {
+        await sendOneSignalNotification({
+          title: 'Agendamento Cancelado',
+          body: `${appointmentData.clientName} cancelou o agendamento de ${dateStr} às ${timeStr}`,
+          playerIds: [adminPlayerId],
+          data: {
+            type: 'appointment_cancelled',
+            appointmentId,
+            url: '/pages/admin/index',
+          },
+        });
+      }
+      
+      if (clientPlayerId) {
+        await sendOneSignalNotification({
+          title: 'Agendamento Cancelado',
+          body: `Seu agendamento de ${dateStr} às ${timeStr} foi cancelado.`,
+          playerIds: [clientPlayerId],
+          data: {
+            type: 'appointment_cancelled',
+            appointmentId,
+            url: '/pages/booking/index',
+          },
+        });
+      }
+    } catch (error) {
+      console.error('Error sending OneSignal notifications for cancellation:', error);
+    }
+  }
 }
 
 export async function setAppointmentStatus(
@@ -401,7 +527,42 @@ export async function markOnMyWay(appointmentId: string): Promise<void> {
 
   const db = getFirebaseDb();
   if (!db) throw new Error('Firebase indisponível');
+  
+  // First get the appointment data for notification
+  let appointmentData: Appointment | null = null;
+  try {
+    const appointmentDoc = await getDoc(doc(db, 'appointments', appointmentId));
+    if (appointmentDoc.exists()) {
+      appointmentData = { id: appointmentDoc.id, ...(appointmentDoc.data() as Omit<Appointment, 'id'>) };
+    }
+  } catch (error) {
+    console.error('Error getting appointment for on-my-way notification:', error);
+  }
+
   await updateDoc(doc(db, 'appointments', appointmentId), { onMyWayAt: now, updatedAt: now });
+
+  // Send OneSignal notification to admin when client is on the way
+  if (appointmentData) {
+    try {
+      const adminPlayerId = await getAdminPlayerId();
+      const timeStr = dayjs(appointmentData.startAt).format('HH:mm');
+      
+      if (adminPlayerId) {
+        await sendOneSignalNotification({
+          title: 'Cliente está a caminho!',
+          body: `${appointmentData.clientName} está a caminho para o horário de ${timeStr}!`,
+          playerIds: [adminPlayerId],
+          data: {
+            type: 'client_on_my_way',
+            appointmentId,
+            url: '/pages/admin/index',
+          },
+        });
+      }
+    } catch (error) {
+      console.error('Error sending OneSignal notification for on-my-way:', error);
+    }
+  }
 }
 
 export async function rescheduleAppointment(params: {
