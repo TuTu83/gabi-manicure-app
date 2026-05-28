@@ -242,7 +242,7 @@ export async function showSystemNotification(title: string, body: string, option
         renotify: true,
         tag: options?.notificationId || `gm-notification-${Date.now()}`,
         requireInteraction: true,
-        vibrate: [250, 100, 250],
+        vibrate: [200, 100, 200],
         timestamp: Date.now(),
         data: {
           url: options?.url || '/?notificationSource=gm',
@@ -261,33 +261,33 @@ export async function showSystemNotification(title: string, body: string, option
 
       let notificationDisplayed = false;
       
-      if (navigator.serviceWorker && navigator.serviceWorker.ready) {
+      if (navigator.serviceWorker) {
         try {
           const registration = await navigator.serviceWorker.ready;
           if (registration?.showNotification) {
             await registration.showNotification(title, notificationOptions);
             notificationDisplayed = true;
-            console.log('[Notificacoes] exibida via service worker');
+            console.log('[Notificacoes] exibida VIA SERVICE WORKER (PUSH REAL)');
           }
         } catch (error) {
-          console.warn('[Notificacoes] falha ao exibir via service worker', error);
+          console.error('[Notificacoes] ERRO CRÍTICO ao exibir via service worker', error);
         }
       }
 
       if (!notificationDisplayed) {
+        console.warn('[Notificacoes] Service Worker indisponível, usando fallback');
         try {
           new Notification(title, notificationOptions);
           notificationDisplayed = true;
-          console.log('[Notificacoes] exibida diretamente');
         } catch (error) {
-          console.warn('[Notificacoes] falha ao exibir notificação direta', error);
+          console.error('[Notificacoes] falha no fallback', error);
         }
       }
 
       if (notificationDisplayed) {
         try {
           if ('vibrate' in navigator) {
-            navigator.vibrate([250, 100, 250]);
+            navigator.vibrate([200, 100, 200]);
           }
         } catch (error) {
           console.warn('[Notificacoes] falha ao vibrar', error);
@@ -307,7 +307,7 @@ export async function showSystemNotification(title: string, body: string, option
       }
     }
   } catch (error) {
-    console.warn('[Notificacoes] não foi possível exibir notificação do sistema', error);
+    console.error('[Notificacoes] ERRO CRÍTICO no sistema de notificações', error);
   }
 }
 

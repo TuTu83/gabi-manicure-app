@@ -1,6 +1,52 @@
-self.GM_PWA_CACHE = 'gm-pwa-v3';
+importScripts('https://www.gstatic.com/firebasejs/10.12.5/firebase-app-compat.js');
+importScripts('https://www.gstatic.com/firebasejs/10.12.5/firebase-messaging-compat.js');
+
+self.GM_PWA_CACHE = 'gm-pwa-v5';
+
+const firebaseConfig = {
+  apiKey: 'AIzaSyC7w5V4GQ9fK7o4n2a3l6o9q8w5e7r4t3y2u1i0o9p8a7s6d5f',
+  authDomain: 'gabi-manicure.firebaseapp.com',
+  projectId: 'gabi-manicure',
+  storageBucket: 'gabi-manicure.appspot.com',
+  messagingSenderId: '123456789012',
+  appId: '1:123456789012:web:a1b2c3d4e5f6a7b8c9d0e1f'
+};
+
+try {
+  firebase.initializeApp(firebaseConfig);
+  const messaging = firebase.messaging();
+  
+  messaging.onBackgroundMessage((payload) => {
+    console.log('[SW FCM] Mensagem em background recebida:', payload);
+    const notificationTitle = payload.notification?.title || 'Gabi Manicure';
+    const notificationOptions = {
+      body: payload.notification?.body || 'Nova notificação',
+      icon: '/icon.svg',
+      badge: '/icon.svg',
+      silent: false,
+      renotify: true,
+      tag: payload.data?.tag || `gm-fcm-${Date.now()}`,
+      requireInteraction: true,
+      vibrate: [200, 100, 200],
+      data: payload.data || {}
+    };
+    if (payload.data?.action) {
+      notificationOptions.actions = [
+        {
+          action: payload.data.action,
+          title: 'Estou a caminho'
+        }
+      ];
+    }
+    self.registration.showNotification(notificationTitle, notificationOptions);
+  });
+
+} catch (e) {
+  console.warn('[SW FCM] Firebase não configurado, usando service worker básico');
+}
 
 self.addEventListener('install', (event) => {
+  console.log('[SW] Instalando Service Worker v5');
   event.waitUntil(
     caches.open(self.GM_PWA_CACHE).then((cache) => {
       return cache.addAll(['/','/index.html','/manifest.webmanifest','/icon.svg']).catch(() => undefined);
@@ -10,6 +56,7 @@ self.addEventListener('install', (event) => {
 });
 
 self.addEventListener('activate', (event) => {
+  console.log('[SW] Ativando Service Worker v5');
   event.waitUntil(
     Promise.all([
       caches
@@ -53,6 +100,7 @@ self.addEventListener('fetch', (event) => {
 });
 
 self.addEventListener('notificationclick', (event) => {
+  console.log('[SW] Clique na notificação', event);
   event.notification.close();
   const data = event.notification.data || {};
   const appointmentId = data?.appointmentId;
@@ -80,7 +128,7 @@ self.addEventListener('notificationclick', (event) => {
 });
 
 self.addEventListener('push', (event) => {
-  console.log('[SW] Push recebido', event);
+  console.log('[SW] Push RECEBIDO!', event);
   if (event.data) {
     const data = event.data.json();
     const title = data.title || 'Gabi Manicure';
@@ -92,9 +140,18 @@ self.addEventListener('push', (event) => {
       renotify: true,
       tag: data.tag || `gm-push-${Date.now()}`,
       requireInteraction: true,
-      vibrate: [250, 100, 250],
+      vibrate: [200, 100, 200],
       data: data.data || {}
     };
+    if (data.action) {
+      options.actions = [
+        {
+          action: data.action,
+          title: 'Estou a caminho'
+        }
+      ];
+    }
+    console.log('[SW] Exibindo notificação via Service Worker', title, options);
     event.waitUntil(
       self.registration.showNotification(title, options)
     );

@@ -2,6 +2,7 @@ import { initializeApp, getApps, type FirebaseApp } from 'firebase/app';
 import { browserLocalPersistence, getAuth, setPersistence, type Auth } from 'firebase/auth';
 import { getFirestore, type Firestore } from 'firebase/firestore';
 import { getStorage, type FirebaseStorage } from 'firebase/storage';
+import { getMessaging, getToken, onMessage, type Messaging } from 'firebase/messaging';
 
 declare const __GM_FIREBASE_ENV__: any;
 declare const __GM_FIREBASE_DEBUG__: any;
@@ -114,6 +115,7 @@ let app: FirebaseApp | null = null;
 let auth: Auth | null = null;
 let db: Firestore | null = null;
 let storage: FirebaseStorage | null = null;
+let messaging: Messaging | null = null;
 let loggedInit = false;
 let persistenceSet = false;
 
@@ -181,4 +183,39 @@ export function getFirebaseStorage(): FirebaseStorage | null {
     console.error('[Firebase] falha ao inicializar Storage', error);
     return null;
   }
+}
+
+export function getFirebaseMessaging(): Messaging | null {
+  const firebaseApp = getFirebaseApp();
+  if (!firebaseApp) return null;
+  try {
+    if (messaging) return messaging;
+    messaging = getMessaging(firebaseApp);
+    return messaging;
+  } catch (error) {
+    console.error('[Firebase] falha ao inicializar Messaging', error);
+    return null;
+  }
+}
+
+export async function getFcmToken(): Promise<string | null> {
+  const messaging = getFirebaseMessaging();
+  if (!messaging) return null;
+  try {
+    const vapidKey = readEnvValue('vapidKey');
+    const token = vapidKey 
+      ? await getToken(messaging, { vapidKey })
+      : await getToken(messaging);
+    console.log('[FIREBASE FCM] Token obtido', token ? 'sim' : 'não');
+    return token;
+  } catch (error) {
+    console.error('[FIREBASE FCM] falha ao obter token', error);
+    return null;
+  }
+}
+
+export function onFcmMessage(callback: (payload: any) => void): () => void {
+  const messaging = getFirebaseMessaging();
+  if (!messaging) return () => {};
+  return onMessage(messaging, callback);
 }
