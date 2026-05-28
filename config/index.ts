@@ -72,6 +72,10 @@ export default defineConfig<'webpack5'>(async (merge, { command, mode }) => {
               measurementId: process.env.TARO_APP_FIREBASE_MEASUREMENT_ID || '',
               vapidKey: process.env.TARO_APP_FIREBASE_VAPID_KEY || '',
             }),
+            __GM_ONESIGNAL_ENV__: JSON.stringify({
+              appId: process.env.TARO_APP_ONESIGNAL_APP_ID || '',
+              restApiKey: process.env.TARO_APP_ONESIGNAL_REST_API_KEY || '',
+            }),
             __GM_FIREBASE_DEBUG__: JSON.stringify(process.env.TARO_APP_FIREBASE_DEBUG || ''),
           },
         ]);
@@ -123,6 +127,10 @@ export default defineConfig<'webpack5'>(async (merge, { command, mode }) => {
               appId: process.env.TARO_APP_FIREBASE_APP_ID || '',
               measurementId: process.env.TARO_APP_FIREBASE_MEASUREMENT_ID || '',
               vapidKey: process.env.TARO_APP_FIREBASE_VAPID_KEY || '',
+            }),
+            __GM_ONESIGNAL_ENV__: JSON.stringify({
+              appId: process.env.TARO_APP_ONESIGNAL_APP_ID || '',
+              restApiKey: process.env.TARO_APP_ONESIGNAL_REST_API_KEY || '',
             }),
             __GM_FIREBASE_DEBUG__: JSON.stringify(process.env.TARO_APP_FIREBASE_DEBUG || ''),
           },
