@@ -8,6 +8,8 @@ import { subscribeAppSettings } from '@/services/settingsService';
 // Estilos globais
 import './app.scss';
 
+// Importar Capacitor
+import { Capacitor } from '@capacitor/core';
 // Importar Capacitor Push Notifications
 import { PushNotifications } from '@capacitor/push-notifications';
 
@@ -60,7 +62,7 @@ function App(props: { children: React.ReactNode }) {
   // 1. Inicializar FCM Capacitor (sem depender de currentUser)
   // ========================================
   useEffect(() => {
-    const isNative = (window as any).Capacitor?.isNative;
+    const isNative = Capacitor.isNativePlatform();
     addDebugLog('FCM DEBUG', `Ambiente nativo: ${isNative}`);
     
     if (!isNative) {
