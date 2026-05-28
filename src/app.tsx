@@ -4,12 +4,12 @@ import Taro, { useDidShow, useDidHide } from '@tarojs/taro';
 import classnames from 'classnames';
 import { useAppStore } from '@/store/appStore';
 import { isAdminUser, updateUserFcmToken } from '@/services/adminService';
-import { requestNotificationPermission, showSystemNotification, subscribeAdminNotifications, subscribeNotificationsForUser } from '@/services/notificationService';
 import { subscribeAppSettings } from '@/services/settingsService';
 // Estilos globais
 import './app.scss';
 
-const ONESIGNAL_APP_ID = '82892143-d160-4756-8b63-327b8f69a41e';
+// Importar Capacitor Push Notifications
+import { PushNotifications } from '@capacitor/push-notifications';
 
 // Armazena estado de debug em memória
 (window as any).__DEBUG_PUSH = {
@@ -25,11 +25,12 @@ const addDebugLog = (type: string, message: string, data?: any) => {
   console.log(`\n=== [${type}] ===`);
   console.log(message, data || '');
   console.log('==================\n');
-  debugStore.logs.push(log);
+  debugStore.logs = [...(debugStore.logs || []), log];
   if (debugStore.logs.length > 100) debugStore.logs.shift();
   if (type.includes('ERROR') || type.includes('ERR')) {
     debugStore.lastError = log;
   }
+  (window as any).__DEBUG_PUSH = debugStore;
 };
 
 function App(props: { children: React.ReactNode }) {
@@ -40,289 +41,127 @@ function App(props: { children: React.ReactNode }) {
   const isInstalledRef = useRef(false);
   const promptingRef = useRef(false);
   const installedOnceRef = useRef(false);
+  const fcmTokenRef = useRef<string | null>(null);
 
+  // ========================================
+  // Função para salvar token no Firestore
+  // ========================================
+  const saveTokenToFirestore = async (token: string, userId: string) => {
+    try {
+      addDebugLog('FIRESTORE DEBUG', `Salvando token FCM para usuário ${userId}...`, { token: token.substring(0, 20) + '...' });
+      await updateUserFcmToken(userId, token);
+      addDebugLog('FIRESTORE DEBUG', 'Token FCM SALVO com sucesso!');
+    } catch (err) {
+      addDebugLog('FIRESTORE ERROR', 'Erro ao salvar token FCM', err);
+    }
+  };
+
+  // ========================================
+  // 1. Inicializar FCM Capacitor (sem depender de currentUser)
+  // ========================================
   useEffect(() => {
-    const isBrowser = typeof window !== 'undefined' && typeof document !== 'undefined';
-    if (!isBrowser) return;
-    if (process.env.TARO_ENV !== 'h5') return;
+    const isNative = (window as any).Capacitor?.isNative;
+    addDebugLog('FCM DEBUG', `Ambiente nativo: ${isNative}`);
     
-    // ========================================
-    // ETAPA 1: DEBUG DE AMBIENTE E SW
-    // ========================================
-    addDebugLog('APP DEBUG', 'Iniciando sistema de debug completo');
-    addDebugLog('ENV DEBUG', `Ambiente: ${process.env.NODE_ENV}`);
-    addDebugLog('ENV DEBUG', `Taro Env: ${process.env.TARO_ENV}`);
-    addDebugLog('SW DEBUG', `navigator.serviceWorker disponível: ${'serviceWorker' in navigator}`);
-    
-    // Verifica Service Workers ativos
-    if ('serviceWorker' in navigator) {
-      navigator.serviceWorker.getRegistrations().then((regs) => {
-        addDebugLog('SW DEBUG', `Service Workers ativos encontrados: ${regs.length}`);
-        regs.forEach((reg, index) => {
-          addDebugLog('SW DEBUG', `SW ${index}: ${reg.scope}`, {
-            active: !!reg.active,
-            waiting: !!reg.waiting,
-            installing: !!reg.installing,
-          });
-        });
-      }).catch(err => {
-        addDebugLog('SW ERROR', `Erro ao buscar SW ativos: ${err.message}`, err);
-      });
+    if (!isNative) {
+      addDebugLog('FCM INFO', 'App rodando em Web, FCM Nativo não disponível');
+      return;
     }
 
-    // Registra o Service Worker do OneSignal
-    addDebugLog('SW DEBUG', 'Registrando OneSignal Service Worker...');
-    navigator.serviceWorker.register('/OneSignalSDKWorker.js')
-      .then((reg) => {
-        addDebugLog('SW DEBUG', 'OneSignal Service Worker REGISTRADO com sucesso!', {
-          scope: reg.scope,
-          active: !!reg.active,
-        });
-      })
-      .catch((err) => {
-        addDebugLog('SW ERROR', 'Falha ao registrar SW do OneSignal', err);
-      });
-  }, []);
-
-  useEffect(() => {
-    const isBrowser = typeof window !== 'undefined' && typeof document !== 'undefined';
-    if (!isBrowser) return;
-    if (process.env.TARO_ENV !== 'h5') return;
-    if (!currentUser) return;
-
-    let cancelled = false;
-
-    const initOneSignal = async () => {
-      // ========================================
-      // ETAPA 2: DEBUG DE PERMISSÃO
-      // ========================================
-      addDebugLog('ONESIGNAL DEBUG', 'Inicializando sistema OneSignal');
-      addDebugLog('PERMISSÃO DEBUG', `Notification.permission: ${Notification?.permission}`);
-      
-      // Verifica Push Manager
-      addDebugLog('PUSH DEBUG', `PushManager disponível: ${'PushManager' in window}`);
-      
-      if ('PushManager' in window && 'serviceWorker' in navigator) {
-        navigator.serviceWorker.ready.then((reg) => {
-          reg.pushManager.getSubscription().then((sub) => {
-            addDebugLog('PUSH DEBUG', `PushSubscription disponível: ${!!sub}`, sub ? {
-              endpoint: !!sub.endpoint,
-              keys: !!sub.toJSON().keys,
-            } : null);
-          });
-        });
-      }
-
+    const initializeFCM = async () => {
       try {
-        addDebugLog('ONESIGNAL DEBUG', 'Carregando script OneSignal...');
-        const script = document.createElement('script');
-        script.src = 'https://cdn.onesignal.com/sdks/web/v16/OneSignalSDK.page.js';
-        script.defer = true;
-        script.async = true;
-        document.head.appendChild(script);
+        // 1. Solicitar permissão
+        addDebugLog('FCM DEBUG', 'Solicitando permissão de notificações...');
+        const permStatus = await PushNotifications.requestPermissions();
+        
+        if (permStatus.receive !== 'granted') {
+          addDebugLog('FCM ERROR', 'Permissão de notificações negada!');
+          return;
+        }
+        
+        addDebugLog('FCM DEBUG', 'Permissão de notificações CONCEDIDA!');
 
-        script.onload = async () => {
-          if (cancelled) return;
-          
-          addDebugLog('ONESIGNAL DEBUG', 'Script carregado, inicializando...');
-          const OneSignal = (window as any).OneSignal || [];
-          
-          OneSignal.push(function() {
-            // ========================================
-            // ETAPA 3: INICIALIZAÇÃO ONE SIGNAL
-            // ========================================
-            addDebugLog('ONESIGNAL DEBUG', `Chamando OneSignal.init com AppID: ${ONESIGNAL_APP_ID}`);
-            
-            OneSignal.init({
-              appId: ONESIGNAL_APP_ID,
-              serviceWorkerParam: {
-                scope: '/'
-              },
-              serviceWorkerPath: 'OneSignalSDKWorker.js',
-              notifyButton: {
-                enable: false
-              },
-              allowLocalhostAsSecureOrigin: true,
-            });
+        // 2. Registrar push notifications
+        addDebugLog('FCM DEBUG', 'Registrando FCM...');
+        await PushNotifications.register();
+        addDebugLog('FCM DEBUG', 'Registro FCM concluído!');
 
-            // ========================================
-            // ETAPA 4: LISTENERS ONE SIGNAL
-            // ========================================
-            OneSignal.on('subscriptionChange', async (isSubscribed: boolean) => {
-              addDebugLog('ONESIGNAL DEBUG', `subscriptionChange: isSubscribed=${isSubscribed}`);
-              
-              if (isSubscribed && !cancelled) {
-                try {
-                  const playerId = await OneSignal.getUserId();
-                  addDebugLog('ONESIGNAL DEBUG', `Player ID obtido: ${playerId}`);
-                  
-                  const subscriptionId = OneSignal.User.PushSubscription.id;
-                  const token = OneSignal.User.PushSubscription.token;
-                  const onesignalId = OneSignal.User.onesignalId;
-                  
-                  addDebugLog('ONESIGNAL DEBUG', 'Dados completos da inscrição', {
-                    playerId,
-                    subscriptionId,
-                    token: !!token,
-                    onesignalId,
-                  });
-                  
-                  if (playerId) {
-                    addDebugLog('FIRESTORE DEBUG', `Salvando playerId no Firestore para usuário ${currentUser.id}...`);
-                    await updateUserFcmToken(currentUser.id, playerId);
-                    addDebugLog('FIRESTORE DEBUG', 'Player ID SALVO com sucesso!');
-                  }
-                } catch (error) {
-                  addDebugLog('FIRESTORE ERROR', 'Erro ao salvar player ID', error);
-                }
-              }
-            });
-
-            OneSignal.on('notificationDisplay', (event: any) => {
-              addDebugLog('PUSH DEBUG', 'NOTIFICAÇÃO RECEBIDA EM FOREGROUND!', event);
-              (window as any).__DEBUG_PUSH.lastReceived = event;
-            });
-
-            OneSignal.on('notificationOpened', (event: any) => {
-              addDebugLog('PUSH DEBUG', 'NOTIFICAÇÃO CLICADA!', event);
-              if (event?.url) {
-                window.location.href = event.url;
-              }
-            });
-
-            addDebugLog('ONESIGNAL DEBUG', 'Todos listeners configurados!');
-          });
-        };
-
-        script.onerror = (error) => {
-          addDebugLog('ONESIGNAL ERROR', 'Falha ao carregar script do OneSignal', error);
-        };
-      } catch (error) {
-        addDebugLog('ONESIGNAL ERROR', 'Falha na inicialização geral', error);
+        // 3. Obter token atual (se já existir)
+        addDebugLog('FCM DEBUG', 'Obtendo token FCM atual...');
+        const tokenResult = await PushNotifications.getDeliveredNotifications();
+        // Nota: Para obter o token diretamente, algumas versões podem precisar de outro método
+        // Vamos confiar no listener 'registration' que é o método oficial
+        
+        addDebugLog('FCM DEBUG', 'Sistema FCM inicializado com sucesso!');
+      } catch (err) {
+        addDebugLog('FCM ERROR', 'Erro ao inicializar FCM', err);
       }
     };
 
-    initOneSignal();
+    // 4. Listener para token de registro (será chamado quando o token for gerado/atualizado)
+    const tokenListener = PushNotifications.addListener('registration', async (tokenResponse) => {
+      const token = tokenResponse.value;
+      addDebugLog('FCM DEBUG', 'Token FCM recebido!', { token: token.substring(0, 20) + '...' });
+      fcmTokenRef.current = token;
+      
+      // Se o usuário já estiver logado, salva imediatamente
+      if (currentUser?.id) {
+        addDebugLog('FCM DEBUG', 'Usuário já está logado, salvando token...');
+        await saveTokenToFirestore(token, currentUser.id);
+      } else {
+        addDebugLog('FCM DEBUG', 'Usuário não está logado, armazenando token para depois...');
+      }
+    });
+
+    // 5. Listener para erro de registro
+    const errorListener = PushNotifications.addListener('registrationError', (error) => {
+      addDebugLog('FCM ERROR', 'Erro no registro FCM', error);
+    });
+
+    // 6. Listener para notificações recebidas em foreground
+    const notificationListener = PushNotifications.addListener('pushNotificationReceived', (notification) => {
+      addDebugLog('FCM DEBUG', 'NOTIFICAÇÃO RECEBIDA (FOREGROUND)!', notification);
+      (window as any).__DEBUG_PUSH.lastReceived = notification;
+    });
+
+    // 7. Listener para notificações clicadas/abertas
+    const actionListener = PushNotifications.addListener('pushNotificationActionPerformed', (action) => {
+      addDebugLog('FCM DEBUG', 'NOTIFICAÇÃO CLICADA/ABERTA!', action);
+      (window as any).__DEBUG_PUSH.lastReceived = action;
+    });
+
+    initializeFCM();
+
+    // Cleanup listeners ao desmontar
     return () => {
-      cancelled = true;
+      tokenListener.remove();
+      errorListener.remove();
+      notificationListener.remove();
+      actionListener.remove();
     };
-  }, [currentUser?.id]);
+  }, []);
 
   // ========================================
-  // ETAPA 5: DIAGNÓSTICO ANDROID/PWA
+  // 2. Quando o usuário logar, salva o token armazenado (se houver)
   // ========================================
   useEffect(() => {
-    const isBrowser = typeof window !== 'undefined' && typeof document !== 'undefined';
-    if (!isBrowser) return;
+    if (!currentUser?.id) {
+      addDebugLog('FCM DEBUG', 'Nenhum usuário logado');
+      return;
+    }
 
-    const diagnose = () => {
-      const ua = String(window.navigator.userAgent || '');
-      const standalone = (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches) || (window.navigator as any).standalone === true;
-      const isAndroid = /Android/i.test(ua);
-      const isChrome = /Chrome|CriOS/i.test(ua);
-      
-      addDebugLog('PWA DIAGNÓSTICO', 'Diagnóstico completo:', {
-        standalone,
-        isAndroid,
-        isChrome,
-        notificationPermission: Notification?.permission,
-        serviceWorkerSupported: 'serviceWorker' in navigator,
-        pushManagerSupported: 'PushManager' in window,
-        visibilityState: document.visibilityState,
-        userAgent: ua.slice(0, 100),
-      });
-    };
+    addDebugLog('FCM DEBUG', 'Usuário logado!', { userId: currentUser.id, email: currentUser.email });
 
-    diagnose();
-    document.addEventListener('visibilitychange', () => {
-      addDebugLog('PWA DIAGNÓSTICO', `visibilitychange: ${document.visibilityState}`);
-    });
-  }, []);
+    // Se temos um token armazenado, salva agora
+    if (fcmTokenRef.current) {
+      addDebugLog('FCM DEBUG', 'Token FCM armazenado encontrado, salvando...');
+      saveTokenToFirestore(fcmTokenRef.current, currentUser.id);
+    }
+  }, [currentUser?.id]);
 
   useEffect(() => {
     return subscribeAppSettings((next) => setSettings(next));
   }, [setSettings]);
-
-  useEffect(() => {
-    const isBrowser = typeof window !== 'undefined' && typeof document !== 'undefined';
-    if (!isBrowser) return;
-    if (process.env.TARO_ENV !== 'h5') return;
-    if (!currentUser) return;
-
-    let unsub: (() => void) | null = null;
-    let initialized = false;
-    const run = async () => {
-      const isAdmin = await isAdminUser(currentUser || null);
-      if (!isAdmin) return;
-      const path = String(window.location.pathname || '');
-      if (path.includes('/pages/admin/index')) return;
-      if (settings.notificationsEnabled && window.Notification && window.Notification.permission === 'default') {
-        await requestNotificationPermission();
-      }
-
-      const previousIds = new Set<string>();
-      unsub = subscribeAdminNotifications((items) => {
-        if (!settings.notificationsEnabled) return;
-        const newItems = items.filter((n) => !previousIds.has(n.id));
-        if (initialized && newItems.length) {
-          const latest = newItems[0];
-          addDebugLog('NOTIFICAÇÃO LOCAL', 'Exibindo notificação local (fallback)', latest);
-          showSystemNotification(latest.title, latest.body, {
-            notificationId: latest.id,
-            url: '/pages/admin/index',
-          });
-        }
-        previousIds.clear();
-        items.forEach((n) => previousIds.add(n.id));
-        initialized = true;
-      });
-    };
-
-    run().catch(() => undefined);
-    return () => {
-      if (unsub) unsub();
-    };
-  }, [currentUser, settings.notificationsEnabled]);
-
-  useEffect(() => {
-    const isBrowser = typeof window !== 'undefined' && typeof document !== 'undefined';
-    if (!isBrowser) return;
-    if (process.env.TARO_ENV !== 'h5') return;
-    if (!currentUser) return;
-
-    let unsub: (() => void) | null = null;
-    let initialized = false;
-    const run = async () => {
-      const isAdmin = await isAdminUser(currentUser || null);
-      if (isAdmin) return;
-      if (settings.notificationsEnabled && window.Notification && window.Notification.permission === 'default') {
-        await requestNotificationPermission();
-      }
-
-      const previousIds = new Set<string>();
-      unsub = subscribeNotificationsForUser(currentUser.id, (items) => {
-        if (!settings.notificationsEnabled) return;
-        const newItems = items.filter((n) => !previousIds.has(n.id));
-        if (initialized && newItems.length) {
-          const latest = newItems[0];
-          addDebugLog('NOTIFICAÇÃO LOCAL', 'Exibindo notificação local (fallback)', latest);
-          showSystemNotification(latest.title, latest.body, {
-            notificationId: latest.id,
-            url: '/pages/booking/index',
-            appointmentId: latest.appointmentId,
-          });
-        }
-        previousIds.clear();
-        items.forEach((n) => previousIds.add(n.id));
-        initialized = true;
-      });
-    };
-
-    run().catch(() => undefined);
-    return () => {
-      if (unsub) unsub();
-    };
-  }, [currentUser, settings.notificationsEnabled]);
 
   useEffect(() => {
     const isBrowser = typeof window !== 'undefined' && typeof document !== 'undefined';
@@ -359,7 +198,6 @@ function App(props: { children: React.ReactNode }) {
       isInstalledRef.current = true;
       installPromptRef.current = null;
       installedOnceRef.current = true;
-      addDebugLog('PWA DEBUG', 'Aplicativo instalado como PWA!');
       try {
         window.localStorage.setItem('gm.pwa.installedOnce', '1');
         window.localStorage.removeItem('gm.pwa.promptDontAskUntil');
@@ -419,6 +257,7 @@ function App(props: { children: React.ReactNode }) {
     };
   }, [currentUser?.email, currentUser?.id]);
 
+  // Equivalente ao onShow
   useDidShow(() => {
     const isBrowser = typeof window !== 'undefined' && typeof document !== 'undefined';
     if (!isBrowser) return;
@@ -474,6 +313,7 @@ function App(props: { children: React.ReactNode }) {
     })();
   });
 
+  // Equivalente ao onHide
   useDidHide(() => {});
 
   const theme = useAppStore((s) => s.theme);

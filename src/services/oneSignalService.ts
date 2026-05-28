@@ -15,7 +15,7 @@ const ONESIGNAL_REST_API_KEY =
 
 const addDebugLog = (type: string, message: string, data?: any) => {
   const log = { type, message, timestamp: Date.now(), data };
-  const debugStore = (window as any).__DEBUG_PUSH || { logs: [], lastSent: null, lastError: null };
+  const debugStore = (window as any).__DEBUG_PUSH || { logs: [], lastSent: null, lastReceived: null, lastError: null };
   console.log(`\n=== [${type}] ===`);
   console.log(message, data || '');
   console.log('==================\n');
@@ -59,7 +59,7 @@ export async function sendOneSignalNotification(params: SendOneSignalNotificatio
     }
 
     // ========================================
-    // ETAPA: MONTAGEM DO PAYLOAD
+    // ETAPA: PAYLOAD MÁXIMO PARA ANDROID (Web Push como Nativo)
     // ========================================
     const payload = {
       app_id: ONESIGNAL_APP_ID,
@@ -67,21 +67,46 @@ export async function sendOneSignalNotification(params: SendOneSignalNotificatio
       headings: { en: params.title },
       contents: { en: params.body },
       data: params.data || {},
-      android_channel_id: 'gabi_manicure_notifications',
-      priority: 10, // High priority
-      android_background_data: true,
-      chrome_web_icon: '/icon.svg',
-      firefox_icon: '/icon.svg',
-      ios_badgeType: 'Increase',
-      ios_badgeCount: 1,
-      // Garante heads-up no Android
-      android_visibility: 1,
+      
+      // ============ PRIORIDADE MÁXIMA ============
+      priority: 10,
+      android_priority: 10,
+      
+      // ============ SOM E VIBRAÇÃO ============
       android_sound: 'default',
-      android_led_color: 'FFFFFF',
+      ios_sound: 'default',
+      
+      // ============ EXIBIÇÃO E VISIBILIDADE ============
+      android_visibility: 2, // 2 = PUBLIC - máximas chances de heads-up
+      
+      // ============ CANAL E AGRUPAMENTO ============
+      android_channel_id: 'gabi_manicure_high', // Canal de alta prioridade
+      android_group: 'gabi_manicure_appointments',
+      
+      // ============ ENTREGA GARANTIDA ============
+      content_available: true,
+      mutable_content: true,
+      collapse_id: 'gabi_appointment_update',
+      
+      // ============ ÍCONES E APARÊNCIA ============
+      chrome_web_icon: '/icon.svg',
+      chrome_web_badge: '/icon.svg',
+      firefox_icon: '/icon.svg',
+      small_icon: '/icon.svg',
+      large_icon: '/icon.svg',
+      chrome_icon: '/icon.svg',
+      
+      // ============ COMPORTAMENTO DE HEADS-UP ============
+      // Garante que apareça na tela
+      android_led_color: 'FF4C84C1',
       android_accent_color: 'FF4C84C1',
+      
+      // ============ TAGS/IDENTIFICAÇÃO ============
+      category: 'msg',
+      thread_id: params.data?.appointmentId || 'general',
     };
 
-    addDebugLog('CLOUD PUSH DEBUG', 'Payload completo para OneSignal:', JSON.parse(JSON.stringify(payload)));
+    addDebugLog('CLOUD PUSH DEBUG', 'Payload COMPLETO (MAXIMIZADO ANDROID):', JSON.parse(JSON.stringify(payload)));
 
     // ========================================
     // ETAPA: REQUISIÇÃO À API
@@ -108,14 +133,14 @@ export async function sendOneSignalNotification(params: SendOneSignalNotificatio
     let result;
     try {
       result = await response.json();
-      addDebugLog('CLOUD PUSH DEBUG', 'Corpo da resposta:', result);
+      addDebugLog('CLOUD PUSH DEBUG', 'Corpo da resposta API:', result);
     } catch (jsonErr) {
       addDebugLog('CLOUD PUSH ERROR', 'Falha ao parsear JSON da resposta', jsonErr);
       return false;
     }
 
     if (!response.ok) {
-      addDebugLog('CLOUD PUSH ERROR', 'OneSignal API retornou erro!', {
+      addDebugLog('CLOUD PUSH ERROR', 'OneSignal API retornou ERRO!', {
         status: response.status,
         errors: result.errors,
       });
@@ -123,15 +148,16 @@ export async function sendOneSignalNotification(params: SendOneSignalNotificatio
     }
 
     // ========================================
-    // ETAPA: LOG DE SUCESSO
+    // ETAPA: LOG DE SUCESSO COMPLETO
     // ========================================
-    addDebugLog('CLOUD PUSH SUCESSO', 'NOTIFICAÇÃO CLOUD ENVIADA COM SUCESSO!', {
+    addDebugLog('CLOUD PUSH SUCESSO', 'NOTIFICAÇÃO ENVIADA COM SUCESSO!', {
       recipients: result.recipients,
       id: result.id,
+      external_id: result.external_id,
     });
     
     if (result.invalid_player_ids && result.invalid_player_ids.length > 0) {
-      addDebugLog('CLOUD PUSH AVISO', 'Alguns player IDs são inválidos:', result.invalid_player_ids);
+      addDebugLog('CLOUD PUSH AVISO', 'Player IDs INVÁLIDOS (ignorados):', result.invalid_player_ids);
     }
 
     // Atualiza debug store
