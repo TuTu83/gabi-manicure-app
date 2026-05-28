@@ -289,3 +289,15 @@ export async function setUserAdminFields(userId: string, input: Partial<Pick<Use
   if (!db) throw new Error('Firebase indisponível');
   await updateDoc(doc(db, 'users', userId), input as any);
 }
+
+export async function updateUserFcmToken(userId: string, fcmToken: string): Promise<void> {
+  if (!isFirebaseConfigured()) return;
+  const db = getFirebaseDb();
+  if (!db) return;
+  try {
+    await updateDoc(doc(db, 'users', userId), { fcmToken, updatedAt: Date.now() });
+    console.log('[Admin] Token FCM salvo com sucesso para usuário:', userId);
+  } catch (error) {
+    console.error('[Admin] falha ao salvar token FCM', error);
+  }
+}

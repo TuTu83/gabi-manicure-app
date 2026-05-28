@@ -12,6 +12,7 @@ export interface UserProfile {
   vip?: boolean;
   blocked?: boolean;
   adminNotes?: string;
+  fcmToken?: string;
 }
 
 export interface RegisterDraft {

@@ -4,8 +4,10 @@ import Taro, { useDidShow, useDidHide } from '@tarojs/taro';
 import classnames from 'classnames';
 import { useAppStore } from '@/store/appStore';
 import { isAdminUser } from '@/services/adminService';
-import { requestNotificationPermission, showSystemNotification, subscribeAdminNotifications, subscribeNotificationsForUser } from '@/services/notificationService';
+import { requestNotificationPermission, showSystemNotification, subscribeAdminNotifications } from '@/services/notificationService';
 import { subscribeAppSettings } from '@/services/settingsService';
+import { getFcmToken, onFcmMessage } from '@/services/firebase';
+import { updateUserFcmToken } from '@/services/adminService';
 // Estilos globais
 import './app.scss';
 
@@ -28,6 +30,46 @@ function App(props: { children: React.ReactNode }) {
       console.warn('[PWA] falha ao registrar service worker', err);
     });
   }, []);
+
+  useEffect(() => {
+    const isBrowser = typeof window !== 'undefined' && typeof document !== 'undefined';
+    if (!isBrowser) return;
+    if (process.env.TARO_ENV !== 'h5') return;
+    if (!currentUser) return;
+
+    let cancelled = false;
+
+    const initFcm = async () => {
+      try {
+        console.log('[APP] Inicializando FCM...');
+        const token = await getFcmToken();
+        if (token && !cancelled) {
+          console.log('[APP FCM] Token obtido:', token.substring(0, 20) + '...');
+          await updateUserFcmToken(currentUser.id, token);
+        }
+
+        const unsubFcm = onFcmMessage((payload) => {
+          console.log('[APP FCM] Mensagem em foreground recebida:', payload);
+          const title = payload.notification?.title || 'Gabi Manicure';
+          const body = payload.notification?.body || 'Nova notificação';
+          showSystemNotification(title, body, {
+            notificationId: payload.data?.notificationId,
+            url: payload.data?.url,
+            appointmentId: payload.data?.appointmentId,
+          });
+        });
+
+        return unsubFcm;
+      } catch (error) {
+        console.error('[APP FCM] falha na inicialização:', error);
+      }
+    };
+
+    initFcm();
+    return () => {
+      cancelled = true;
+    };
+  }, [currentUser?.id]);
 
   useEffect(() => {
     return subscribeAppSettings((next) => setSettings(next));
