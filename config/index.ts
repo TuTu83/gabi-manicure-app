@@ -27,6 +27,8 @@ export default defineConfig<'webpack5'>(async (merge, { command, mode }) => {
         { from: 'src/pwa/manifest.webmanifest', to: 'dist/manifest.webmanifest' },
         { from: 'src/pwa/sw.js', to: 'dist/sw.js' },
         { from: 'src/pwa/icon.svg', to: 'dist/icon.svg' },
+        { from: 'src/pwa/OneSignalSDKWorker.js', to: 'dist/OneSignalSDKWorker.js' },
+        { from: 'src/pwa/OneSignalSDK-v16-ServiceWorker.zip', to: 'dist/OneSignalSDK-v16-ServiceWorker.zip' },
       ],
       options: {},
     },
