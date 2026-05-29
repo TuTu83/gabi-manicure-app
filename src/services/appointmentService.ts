@@ -20,7 +20,6 @@ import { removeUndefinedFields } from '@/services/firebase';
 import { getLocalSettings } from '@/services/settingsService';
 import { consumeRateLimit } from '@/services/storage';
 import { ensurePaymentForFinalizedAppointment } from '@/services/financeService';
-import { sendOneSignalNotification } from '@/services/oneSignalService';
 import type { Appointment, AppointmentReview, AppointmentStatus, LoyaltySummary, WaitlistEntry } from '@/types/booking';
 import type { PaymentMethod } from '@/types/finance';
 import type { UserProfile } from '@/types/user';
@@ -29,7 +28,7 @@ const appointmentsKey = 'gm.appointments';
 const reviewsKey = 'gm.reviews';
 const waitlistKey = 'gm.waitlist';
 
-async function getAdminPlayerId(): Promise<string | null> {
+async function getAdminFcmToken(): Promise<string | null> {
   try {
     const db = getFirebaseDb();
     if (!db) return null;
@@ -43,12 +42,12 @@ async function getAdminPlayerId(): Promise<string | null> {
     }
     return null;
   } catch (error) {
-    console.error('Error getting admin player ID:', error);
+    console.error('Error getting admin FCM token:', error);
     return null;
   }
 }
 
-async function getUserPlayerId(userId: string): Promise<string | null> {
+async function getUserFcmToken(userId: string): Promise<string | null> {
   try {
     const db = getFirebaseDb();
     if (!db) return null;
@@ -60,8 +59,37 @@ async function getUserPlayerId(userId: string): Promise<string | null> {
     }
     return null;
   } catch (error) {
-    console.error('Error getting user player ID:', error);
+    console.error('Error getting user FCM token:', error);
     return null;
+  }
+}
+
+async function sendFcmNotification({
+  title,
+  body,
+  fcmTokens,
+  data = {},
+}: {
+  title: string;
+  body: string;
+  fcmTokens: string[];
+  data?: Record<string, any>;
+}) {
+  try {
+    const response = await fetch('/api/send-notification', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ title, body, fcmTokens, data }),
+    });
+    
+    if (!response.ok) {
+      throw new Error(`API error: ${response.status}`);
+    }
+    
+    return await response.json();
+  } catch (error) {
+    console.error('Error sending FCM notification:', error);
+    throw error;
   }
 }
 
@@ -320,19 +348,23 @@ export async function createAppointment(input: Omit<Appointment, 'id' | 'created
     return { id: ref.id, ...(payload as any) };
   });
 
-  // Send OneSignal notifications
+  // Send FCM notifications
   try {
-    const adminPlayerId = await getAdminPlayerId();
-    const clientPlayerId = await getUserPlayerId(input.userId);
+    const adminFcmToken = await getAdminFcmToken();
+    const clientFcmToken = await getUserFcmToken(input.userId);
     
     const dateStr = dayjs(startAt).format('DD/MM/YYYY');
     const timeStr = dayjs(startAt).format('HH:mm');
     
-    if (adminPlayerId) {
-      await sendOneSignalNotification({
+    const tokensToSend: string[] = [];
+    if (adminFcmToken) tokensToSend.push(adminFcmToken);
+    if (clientFcmToken) tokensToSend.push(clientFcmToken);
+    
+    if (tokensToSend.length > 0) {
+      await sendFcmNotification({
         title: 'Novo Agendamento!',
         body: `${input.clientName} agendou para ${dateStr} às ${timeStr}`,
-        playerIds: [adminPlayerId],
+        fcmTokens: tokensToSend,
         data: {
           type: 'new_appointment',
           appointmentId: appointment.id,
@@ -340,21 +372,8 @@ export async function createAppointment(input: Omit<Appointment, 'id' | 'created
         },
       });
     }
-    
-    if (clientPlayerId) {
-      await sendOneSignalNotification({
-        title: 'Agendamento Confirmado!',
-        body: `Seu agendamento para ${dateStr} às ${timeStr} foi confirmado!`,
-        playerIds: [clientPlayerId],
-        data: {
-          type: 'appointment_confirmed',
-          appointmentId: appointment.id,
-          url: '/pages/booking/index',
-        },
-      });
-    }
   } catch (error) {
-    console.error('Error sending OneSignal notifications for new appointment:', error);
+    console.error('Error sending FCM notifications for new appointment:', error);
   }
 
   return appointment;
@@ -395,20 +414,24 @@ export async function cancelAppointment(appointmentId: string): Promise<void> {
     updatedAt: Date.now(),
   });
 
-  // Send OneSignal notifications for cancellation
+  // Send FCM notifications for cancellation
   if (appointmentData) {
     try {
-      const adminPlayerId = await getAdminPlayerId();
-      const clientPlayerId = await getUserPlayerId(appointmentData.userId);
+      const adminFcmToken = await getAdminFcmToken();
+      const clientFcmToken = await getUserFcmToken(appointmentData.userId);
       
       const dateStr = dayjs(appointmentData.startAt).format('DD/MM/YYYY');
       const timeStr = dayjs(appointmentData.startAt).format('HH:mm');
       
-      if (adminPlayerId) {
-        await sendOneSignalNotification({
+      const tokensToSend: string[] = [];
+      if (adminFcmToken) tokensToSend.push(adminFcmToken);
+      if (clientFcmToken) tokensToSend.push(clientFcmToken);
+      
+      if (tokensToSend.length > 0) {
+        await sendFcmNotification({
           title: 'Agendamento Cancelado',
           body: `${appointmentData.clientName} cancelou o agendamento de ${dateStr} às ${timeStr}`,
-          playerIds: [adminPlayerId],
+          fcmTokens: tokensToSend,
           data: {
             type: 'appointment_cancelled',
             appointmentId,
@@ -416,21 +439,8 @@ export async function cancelAppointment(appointmentId: string): Promise<void> {
           },
         });
       }
-      
-      if (clientPlayerId) {
-        await sendOneSignalNotification({
-          title: 'Agendamento Cancelado',
-          body: `Seu agendamento de ${dateStr} às ${timeStr} foi cancelado.`,
-          playerIds: [clientPlayerId],
-          data: {
-            type: 'appointment_cancelled',
-            appointmentId,
-            url: '/pages/booking/index',
-          },
-        });
-      }
     } catch (error) {
-      console.error('Error sending OneSignal notifications for cancellation:', error);
+      console.error('Error sending FCM notifications for cancellation:', error);
     }
   }
 }

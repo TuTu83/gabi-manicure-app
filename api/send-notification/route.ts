@@ -1,59 +1,58 @@
 import { NextRequest, NextResponse } from 'next/server';
+import admin from 'firebase-admin';
 
-const ONESIGNAL_APP_ID = process.env.ONESIGNAL_APP_ID || '';
-const ONESIGNAL_REST_API_KEY = process.env.ONESIGNAL_REST_API_KEY || '';
+// Initialize Firebase Admin SDK (only once)
+if (!admin.apps.length) {
+  // We need the service account JSON from environment variable
+  const serviceAccountBase64 = process.env.FIREBASE_SERVICE_ACCOUNT_BASE64 || '';
+  if (serviceAccountBase64) {
+    const serviceAccount = JSON.parse(
+      Buffer.from(serviceAccountBase64, 'base64').toString('utf-8')
+    );
+    admin.initializeApp({
+      credential: admin.credential.cert(serviceAccount)
+    });
+  }
+}
 
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
-    const { title, body: messageBody, playerIds, data = {} } = body;
+    const { title, body: messageBody, fcmTokens, data = {} } = body;
 
-    if (!ONESIGNAL_APP_ID || !ONESIGNAL_REST_API_KEY) {
+    if (!fcmTokens || fcmTokens.length === 0) {
       return NextResponse.json(
-        { error: 'OneSignal credentials missing' },
-        { status: 500 }
-      );
-    }
-
-    if (!playerIds || playerIds.length === 0) {
-      return NextResponse.json(
-        { error: 'No player IDs provided' },
+        { error: 'No FCM tokens provided' },
         { status: 400 }
       );
     }
 
-    const notificationData = {
-      app_id: ONESIGNAL_APP_ID,
-      include_player_ids: playerIds,
-      headings: { en: title },
-      contents: { en: messageBody },
-      data: data,
-      android_channel_id: 'gabi_manicure_notifications',
-      priority: 10,
-      android_background_data: true,
-      chrome_web_icon: '/icon.svg',
-      firefox_icon: '/icon.svg',
-    };
-
-    const response = await fetch('https://onesignal.com/api/v1/notifications', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Basic ${ONESIGNAL_REST_API_KEY}`,
+    const messages = fcmTokens.map(token => ({
+      token,
+      notification: {
+        title,
+        body: messageBody
       },
-      body: JSON.stringify(notificationData),
-    });
+      data,
+      android: {
+        priority: 'high' as const,
+        notification: {
+          channelId: 'gabi_manicure_channel_high_importance',
+          sound: 'default'
+        }
+      }
+    }));
 
-    const result = await response.json();
+    const results = await Promise.all(
+      messages.map(msg => 
+        admin.messaging().send(msg).catch(error => {
+          console.error('Error sending individual message:', error);
+          return { error: String(error) };
+        })
+      )
+    );
 
-    if (!response.ok) {
-      return NextResponse.json(
-        { error: 'Failed to send notification', details: result },
-        { status: response.status }
-      );
-    }
-
-    return NextResponse.json({ success: true, result });
+    return NextResponse.json({ success: true, results });
   } catch (error) {
     console.error('Error sending notification:', error);
     return NextResponse.json(
