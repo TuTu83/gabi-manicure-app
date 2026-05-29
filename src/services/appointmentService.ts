@@ -37,10 +37,11 @@ async function getAdminFcmToken(): Promise<string | null> {
       return null;
     }
     
-    const q = query(collection(db, 'users'), where('role', '==', 'admin'), limit(1));
+    const ADMIN_EMAIL = 'suporte.gabimanicure@gmail.com';
+    const q = query(collection(db, 'users'), where('email', '==', ADMIN_EMAIL), limit(1));
     const snap = await getDocs(q);
     
-    console.log('[getAdminFcmToken] Found', snap.size, 'admin users');
+    console.log('[getAdminFcmToken] Found', snap.size, 'admin users with email:', ADMIN_EMAIL);
     
     if (!snap.empty) {
       const adminData = snap.docs[0].data() as UserProfile;
@@ -49,7 +50,7 @@ async function getAdminFcmToken(): Promise<string | null> {
       console.log('[getAdminFcmToken] Admin data:', adminData);
       return token;
     }
-    console.error('[getAdminFcmToken] No admin user found!');
+    console.error('[getAdminFcmToken] No admin user found with email:', ADMIN_EMAIL);
     return null;
   } catch (error) {
     console.error('[getAdminFcmToken] Error getting admin FCM token:', error);
