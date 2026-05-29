@@ -29,15 +29,21 @@ const DashboardPage: React.FC = () => {
   const [filterType, setFilterType] = useState<LogType | 'ALL'>('ALL');
 
   const refreshDebugData = () => {
-    const debugStore = (window as any).__DEBUG_PUSH || {
+    const isBrowser = typeof window !== 'undefined' && typeof navigator !== 'undefined';
+    let debugStore = {
       logs: [],
       lastSent: null,
       lastReceived: null,
       lastError: null,
     };
+
+    if (isBrowser) {
+      debugStore = (window as any).__DEBUG_PUSH || debugStore;
+    }
     setDebugData(debugStore);
 
     const getDiagnostics = async () => {
+      if (!isBrowser) return;
       const ua = String(window.navigator.userAgent || '');
       const standalone = (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches) || (window.navigator as any).standalone === true;
       const isAndroid = /Android/i.test(ua);
@@ -46,7 +52,7 @@ const DashboardPage: React.FC = () => {
       const diag = {
         timestamp: new Date().toLocaleString('pt-BR'),
         serviceWorkerSupported: 'serviceWorker' in navigator,
-        visibilityState: document.visibilityState,
+        visibilityState: typeof document !== 'undefined' ? document.visibilityState : 'N/A',
         standalone,
         isAndroid,
         isNative,
@@ -121,11 +127,16 @@ const DashboardPage: React.FC = () => {
 
   const requestNotificationPermission = async () => {
     try {
-      const isNative = !!(window as any).Capacitor?.isNative;
-      if (isNative) {
-        Taro.showToast({ title: 'Permissão já solicitada', icon: 'none' });
+      const isBrowser = typeof window !== 'undefined';
+      if (isBrowser) {
+        const isNative = !!(window as any).Capacitor?.isNative;
+        if (isNative) {
+          Taro.showToast({ title: 'Permissão já solicitada', icon: 'none' });
+        } else {
+          Taro.showToast({ title: 'Notificações web não suportadas', icon: 'none' });
+        }
       } else {
-        Taro.showToast({ title: 'Notificações web não suportadas', icon: 'none' });
+        Taro.showToast({ title: 'Permissão já solicitada', icon: 'none' });
       }
     } catch (error) {
       Taro.showToast({ title: `Erro: ${(error as Error).message}`, icon: 'none' });
@@ -162,16 +173,22 @@ const DashboardPage: React.FC = () => {
       return;
     }
     try {
-      await navigator.clipboard.writeText(fcmToken);
-      Taro.showToast({ title: 'Token FCM copiado!', icon: 'success' });
+      const isBrowser = typeof navigator !== 'undefined' && 'clipboard' in navigator;
+      if (isBrowser) {
+        await navigator.clipboard.writeText(fcmToken);
+        Taro.showToast({ title: 'Token FCM copiado!', icon: 'success' });
+      } else {
+        Taro.showToast({ title: 'Não foi possível copiar o token', icon: 'none' });
+      }
     } catch (error) {
       Taro.showToast({ title: 'Erro ao copiar', icon: 'none' });
     }
   };
 
   const testVibration = () => {
-    if ('vibrate' in navigator) {
-      navigator.vibrate([200, 100, 200, 100, 200]);
+    const isBrowser = typeof navigator !== 'undefined';
+    if (isBrowser && 'vibrate' in navigator) {
+      (navigator as any).vibrate([200, 100, 200, 100, 200]);
       Taro.showToast({ title: 'Vibração ativada!', icon: 'success' });
     } else {
       Taro.showToast({ title: 'Vibração não suportada', icon: 'none' });
@@ -180,20 +197,32 @@ const DashboardPage: React.FC = () => {
 
   const testSound = () => {
     try {
-      const audio = new Audio('data:audio/wav;base64,UklGRigBAABXQVZFZm10IBAAAAABAAEARKwAAIhYAQACABAAAABkYXRhAgAAAAEA');
-      audio.play().catch((e) => {
-        Taro.showToast({ title: 'Erro ao tocar som', icon: 'none' });
-      });
-      Taro.showToast({ title: 'Tentando reproduzir som...', icon: 'none' });
+      const isBrowser = typeof window !== 'undefined' && 'Audio' in window;
+      if (isBrowser) {
+        const audio = new (window as any).Audio('data:audio/wav;base64,UklGRigBAABXQVZFZm10IBAAAAABAAEARKwAAIhYAQACABAAAABkYXRhAgAAAAEA');
+        audio.play().catch((e) => {
+          Taro.showToast({ title: 'Erro ao tocar som', icon: 'none' });
+        });
+        Taro.showToast({ title: 'Tentando reproduzir som...', icon: 'none' });
+      } else {
+        Taro.showToast({ title: 'Som não suportado', icon: 'none' });
+      }
     } catch (error) {
       Taro.showToast({ title: 'Erro ao testar som', icon: 'none' });
     }
   };
 
   const clearLogs = () => {
-    (window as any).__DEBUG_PUSH = { logs: [], lastSent: null, lastReceived: null, lastError: null };
-    refreshDebugData();
-    Taro.showToast({ title: 'Logs limpos!', icon: 'success' });
+    try {
+      const isBrowser = typeof window !== 'undefined';
+      if (isBrowser) {
+        (window as any).__DEBUG_PUSH = { logs: [], lastSent: null, lastReceived: null, lastError: null };
+      }
+      refreshDebugData();
+      Taro.showToast({ title: 'Logs limpos!', icon: 'success' });
+    } catch (e) {
+      Taro.showToast({ title: 'Erro ao limpar logs', icon: 'none' });
+    }
   };
 
   const Badge = ({ label, status, color }: { label: string; status: string | boolean; color?: string }) => {

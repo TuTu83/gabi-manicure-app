@@ -13,14 +13,20 @@ import { Capacitor } from '@capacitor/core';
 // Importar Capacitor Push Notifications
 import { PushNotifications } from '@capacitor/push-notifications';
 
-// Armazena estado de debug em memória
-(window as any).__DEBUG_PUSH = {
+// Armazena estado de debug em memória (sem usar window diretamente)
+let inMemoryDebugStore = {
   lastSent: null,
   lastReceived: null,
   lastError: null,
   logs: [],
   globalErrors: [],
+  fcmToken: null,
 };
+
+// Initialize __DEBUG_PUSH on window only if window exists
+if (typeof window !== 'undefined') {
+  (window as any).__DEBUG_PUSH = inMemoryDebugStore;
+}
 
 const addDebugLog = (type: string, message: string, data?: any) => {
   try {
@@ -39,17 +45,18 @@ const addDebugLog = (type: string, message: string, data?: any) => {
 
     const log = { type, message, timestamp: Date.now(), data: safeData };
 
-    // 3. Armazenar no __DEBUG_PUSH (seguro)
+    // 3. Armazenar no inMemoryDebugStore and window (if available)
     try {
-      const debugStore = (window as any).__DEBUG_PUSH || { logs: [], lastError: null };
-      debugStore.logs = [...(debugStore.logs || []), log];
-      if (debugStore.logs.length > 100) debugStore.logs.shift();
+      inMemoryDebugStore.logs = [...(inMemoryDebugStore.logs || []), log];
+      if (inMemoryDebugStore.logs.length > 100) inMemoryDebugStore.logs.shift();
       if (type.includes('ERROR') || type.includes('ERR')) {
-        debugStore.lastError = log;
+        inMemoryDebugStore.lastError = log;
       }
-      (window as any).__DEBUG_PUSH = debugStore;
+      if (typeof window !== 'undefined') {
+        (window as any).__DEBUG_PUSH = inMemoryDebugStore;
+      }
     } catch (e) {
-      console.log('Erro ao armazenar log no __DEBUG_PUSH:', e);
+      console.log('Erro ao armazenar log:', e);
     }
   } catch (e) {
     // Se tudo falhar, só loga o erro no console
@@ -62,6 +69,10 @@ const addDebugLog = (type: string, message: string, data?: any) => {
 // ========================================
 const setupGlobalErrorHandlers = () => {
   try {
+    if (typeof window === 'undefined') {
+      return;
+    }
+
     addDebugLog('GLOBAL DEBUG', 'Configurando handlers de erro globais');
     
     window.onerror = (message, source, lineno, colno, error) => {
@@ -88,9 +99,8 @@ const setupGlobalErrorHandlers = () => {
         addDebugLog('GLOBAL ERROR', 'window.onerror capturado', errorInfo);
         
         try {
-          (window as any).__DEBUG_PUSH = (window as any).__DEBUG_PUSH || {};
-          (window as any).__DEBUG_PUSH.globalErrors = (window as any).__DEBUG_PUSH.globalErrors || [];
-          (window as any).__DEBUG_PUSH.globalErrors.push({
+          inMemoryDebugStore.globalErrors = inMemoryDebugStore.globalErrors || [];
+          inMemoryDebugStore.globalErrors.push({
             type: 'window.onerror',
             message: String(message || ''),
             source: String(source || ''),
@@ -98,6 +108,9 @@ const setupGlobalErrorHandlers = () => {
             colno: colno,
             errorInfo: errorInfo,
           });
+          if (typeof window !== 'undefined') {
+            (window as any).__DEBUG_PUSH = inMemoryDebugStore;
+          }
         } catch (e) {}
       } catch (e) {}
       return false;
@@ -118,12 +131,14 @@ const setupGlobalErrorHandlers = () => {
         addDebugLog('GLOBAL ERROR', 'window.onunhandledrejection capturado', reasonInfo);
         
         try {
-          (window as any).__DEBUG_PUSH = (window as any).__DEBUG_PUSH || {};
-          (window as any).__DEBUG_PUSH.globalErrors = (window as any).__DEBUG_PUSH.globalErrors || [];
-          (window as any).__DEBUG_PUSH.globalErrors.push({
+          inMemoryDebugStore.globalErrors = inMemoryDebugStore.globalErrors || [];
+          inMemoryDebugStore.globalErrors.push({
             type: 'unhandledrejection',
             reasonInfo: reasonInfo,
           });
+          if (typeof window !== 'undefined') {
+            (window as any).__DEBUG_PUSH = inMemoryDebugStore;
+          }
         } catch (e) {}
       } catch (e) {}
     };
@@ -217,10 +232,12 @@ function App(props: { children: React.ReactNode }) {
             fcmTokenRef.current = token;
             
             try {
-              (window as any).__DEBUG_PUSH = (window as any).__DEBUG_PUSH || {};
-              (window as any).__DEBUG_PUSH.fcmToken = token;
+              inMemoryDebugStore.fcmToken = token;
+              if (typeof window !== 'undefined') {
+                (window as any).__DEBUG_PUSH = inMemoryDebugStore;
+              }
             } catch (e) {
-              addDebugLog('FCM LISTENER', 'Erro ao salvar token no __DEBUG_PUSH:', e);
+              addDebugLog('FCM LISTENER', 'Erro ao salvar token no debug store:', e);
             }
             
             // Salvar token no Firestore se usuário já estiver logado
