@@ -80,7 +80,7 @@ export async function sendOneSignalNotification(params: SendOneSignalNotificatio
       android_visibility: 2, // 2 = PUBLIC - máximas chances de heads-up
       
       // ============ CANAL E AGRUPAMENTO ============
-      android_channel_id: 'gabi_manicure_high', // Canal de alta prioridade
+      android_channel_id: 'gabi_manicure_channel_high_importance', // Canal de alta prioridade
       android_group: 'gabi_manicure_appointments',
       
       // ============ ENTREGA GARANTIDA ============

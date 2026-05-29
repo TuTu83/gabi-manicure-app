@@ -19,20 +19,119 @@ import { PushNotifications } from '@capacitor/push-notifications';
   lastReceived: null,
   lastError: null,
   logs: [],
+  globalErrors: [],
 };
 
 const addDebugLog = (type: string, message: string, data?: any) => {
-  const log = { type, message, timestamp: Date.now(), data };
-  const debugStore = (window as any).__DEBUG_PUSH;
-  console.log(`\n=== [${type}] ===`);
-  console.log(message, data || '');
-  console.log('==================\n');
-  debugStore.logs = [...(debugStore.logs || []), log];
-  if (debugStore.logs.length > 100) debugStore.logs.shift();
-  if (type.includes('ERROR') || type.includes('ERR')) {
-    debugStore.lastError = log;
+  try {
+    // 1. Log no console (seguro)
+    console.log(`\n=== [${type}] ===`);
+    console.log(message, data || '');
+    console.log('==================\n');
+
+    // 2. Preparar log para armazenamento
+    let safeData: any = null;
+    try {
+      safeData = data ? JSON.parse(JSON.stringify(data)) : null;
+    } catch (e) {
+      safeData = String(data || 'dado não serializável');
+    }
+
+    const log = { type, message, timestamp: Date.now(), data: safeData };
+
+    // 3. Armazenar no __DEBUG_PUSH (seguro)
+    try {
+      const debugStore = (window as any).__DEBUG_PUSH || { logs: [], lastError: null };
+      debugStore.logs = [...(debugStore.logs || []), log];
+      if (debugStore.logs.length > 100) debugStore.logs.shift();
+      if (type.includes('ERROR') || type.includes('ERR')) {
+        debugStore.lastError = log;
+      }
+      (window as any).__DEBUG_PUSH = debugStore;
+    } catch (e) {
+      console.log('Erro ao armazenar log no __DEBUG_PUSH:', e);
+    }
+  } catch (e) {
+    // Se tudo falhar, só loga o erro no console
+    console.log('ERRO CRÍTICO no addDebugLog:', e);
   }
-  (window as any).__DEBUG_PUSH = debugStore;
+};
+
+// ========================================
+// CAPTURAR ERROS GLOBAIS JS (SUPER SEGURO)
+// ========================================
+const setupGlobalErrorHandlers = () => {
+  try {
+    addDebugLog('GLOBAL DEBUG', 'Configurando handlers de erro globais');
+    
+    window.onerror = (message, source, lineno, colno, error) => {
+      try {
+        // Ignorar erros com isTrusted: false (eventos comuns não perigosos)
+        const msgStr = String(message || '');
+        if (msgStr.includes('isTrusted: false')) {
+          return false;
+        }
+
+        let errorInfo = 'sem detalhes';
+        try {
+          errorInfo = JSON.stringify({
+            message: message,
+            source: source,
+            lineno: lineno,
+            colno: colno,
+            errorStack: error && error.stack ? error.stack : (error && error.message ? error.message : String(error)),
+          });
+        } catch (e) {
+          errorInfo = 'erro ao serializar';
+        }
+        
+        addDebugLog('GLOBAL ERROR', 'window.onerror capturado', errorInfo);
+        
+        try {
+          (window as any).__DEBUG_PUSH = (window as any).__DEBUG_PUSH || {};
+          (window as any).__DEBUG_PUSH.globalErrors = (window as any).__DEBUG_PUSH.globalErrors || [];
+          (window as any).__DEBUG_PUSH.globalErrors.push({
+            type: 'window.onerror',
+            message: String(message || ''),
+            source: String(source || ''),
+            lineno: lineno,
+            colno: colno,
+            errorInfo: errorInfo,
+          });
+        } catch (e) {}
+      } catch (e) {}
+      return false;
+    };
+
+    window.onunhandledrejection = (event) => {
+      try {
+        let reasonInfo = 'sem reason';
+        try {
+          const reason = event.reason;
+          reasonInfo = JSON.stringify({
+            reasonStack: reason && reason.stack ? reason.stack : (reason && reason.message ? reason.message : String(reason || '')),
+          });
+        } catch (e) {
+          reasonInfo = 'erro ao serializar reason';
+        }
+        
+        addDebugLog('GLOBAL ERROR', 'window.onunhandledrejection capturado', reasonInfo);
+        
+        try {
+          (window as any).__DEBUG_PUSH = (window as any).__DEBUG_PUSH || {};
+          (window as any).__DEBUG_PUSH.globalErrors = (window as any).__DEBUG_PUSH.globalErrors || [];
+          (window as any).__DEBUG_PUSH.globalErrors.push({
+            type: 'unhandledrejection',
+            reasonInfo: reasonInfo,
+          });
+        } catch (e) {}
+      } catch (e) {}
+    };
+    
+    addDebugLog('GLOBAL DEBUG', 'Handlers de erro configurados');
+  } catch (e) {
+    // Não fazer nada, o app não pode quebrar por causa de handlers de erro
+  }
 };
 
 function App(props: { children: React.ReactNode }) {
@@ -59,85 +158,161 @@ function App(props: { children: React.ReactNode }) {
   };
 
   // ========================================
-  // 1. Inicializar FCM Capacitor (sem depender de currentUser)
+  // 0. Configurar handlers de erro globais
+  // ========================================
+  useEffect(() => {
+    setupGlobalErrorHandlers();
+  }, []);
+
+  // ========================================
+  // 1. Inicializar FCM Capacitor (LOGS DETALHADOS)
   // ========================================
   useEffect(() => {
     let tokenListener: any = null;
     let errorListener: any = null;
     let notificationListener: any = null;
     let actionListener: any = null;
+    let isSetup = false;
+    let isRegistered = false;
 
     const setupFCM = async () => {
+      addDebugLog('FCM', '=== setupFCM INICIANDO ===');
+      
+      if (isSetup) {
+        addDebugLog('FCM', 'setupFCM já executado, saindo');
+        return;
+      }
+      isSetup = true;
+      
       try {
         const isNative = Capacitor.isNativePlatform();
-        addDebugLog('FCM DEBUG', `Ambiente nativo: ${isNative}`);
+        addDebugLog('FCM', 'isNativePlatform:', isNative);
         
         if (!isNative) {
-          addDebugLog('FCM INFO', 'App rodando em Web, FCM Nativo não disponível');
+          addDebugLog('FCM', 'Não é nativo, saindo');
           return;
         }
 
-        // 1. Adicionar listeners primeiro para não perder eventos
-        addDebugLog('FCM DEBUG', 'Adicionando listeners...');
+        // 1. Adicionar listeners PRIMEIRO
+        addDebugLog('FCM', 'Adicionando listeners...');
         
-        // Listener para token de registro
-        tokenListener = await PushNotifications.addListener('registration', async (tokenResponse) => {
+        tokenListener = PushNotifications.addListener('registration', async (tokenResponse: any) => {
+          addDebugLog('FCM LISTENER', '=== registration TRIGGERED ===');
           try {
+            addDebugLog('FCM LISTENER', 'tokenResponse:', tokenResponse);
+            
+            if (!tokenResponse) {
+              addDebugLog('FCM LISTENER', 'tokenResponse é null/undefined');
+              return;
+            }
+            
             const token = tokenResponse.value;
-            addDebugLog('FCM DEBUG', 'Token FCM recebido!', { token: token.substring(0, 20) + '...' });
+            addDebugLog('FCM LISTENER', 'token extraído:', token ? token.substring(0, 20) + '...' : 'null');
+            
+            if (!token) {
+              addDebugLog('FCM LISTENER', 'token é null/undefined');
+              return;
+            }
+            
             fcmTokenRef.current = token;
             
-            // Salvar token no store para o dashboard
-            (window as any).__DEBUG_PUSH.fcmToken = token;
-            
-            // Se o usuário já estiver logado, salva imediatamente
-            if (currentUser?.id) {
-              addDebugLog('FCM DEBUG', 'Usuário já está logado, salvando token...');
-              await saveTokenToFirestore(token, currentUser.id);
-            } else {
-              addDebugLog('FCM DEBUG', 'Usuário não está logado, armazenando token para depois...');
+            try {
+              (window as any).__DEBUG_PUSH = (window as any).__DEBUG_PUSH || {};
+              (window as any).__DEBUG_PUSH.fcmToken = token;
+            } catch (e) {
+              addDebugLog('FCM LISTENER', 'Erro ao salvar token no __DEBUG_PUSH:', e);
             }
-          } catch (err) {
-            addDebugLog('FCM ERROR', 'Erro ao processar token FCM', err);
+            
+            // Salvar token no Firestore se usuário já estiver logado
+            if (currentUser?.id) {
+              addDebugLog('FCM LISTENER', 'Usuário logado, salvando token no Firestore...');
+              try {
+                await saveTokenToFirestore(token, currentUser.id);
+                addDebugLog('FCM LISTENER', 'Token salvo no Firestore com sucesso!');
+              } catch (e) {
+                addDebugLog('FCM LISTENER', 'Erro ao salvar token no Firestore:', e);
+              }
+            } else {
+              addDebugLog('FCM LISTENER', 'Usuário não logado, token armazenado para depois');
+            }
+            
+            addDebugLog('FCM LISTENER', '=== registration CONCLUÍDO ===');
+          } catch (listenerErr) {
+            addDebugLog('FCM LISTENER ERRO', 'Erro CRÍTICO no listener registration:', listenerErr);
           }
         });
 
-        // Listener para erro de registro
-        errorListener = await PushNotifications.addListener('registrationError', (error) => {
-          addDebugLog('FCM ERROR', 'Erro no registro FCM', error);
+        errorListener = PushNotifications.addListener('registrationError', (error: any) => {
+          addDebugLog('FCM LISTENER', 'registrationError:', error);
         });
 
-        // Listener para notificações recebidas em foreground
-        notificationListener = await PushNotifications.addListener('pushNotificationReceived', (notification) => {
-          addDebugLog('FCM DEBUG', 'NOTIFICAÇÃO RECEBIDA (FOREGROUND)!', notification);
-          (window as any).__DEBUG_PUSH.lastReceived = notification;
+        notificationListener = PushNotifications.addListener('pushNotificationReceived', (notif: any) => {
+          addDebugLog('FCM LISTENER', '=== pushNotificationReceived (APP ABERTO) ===');
+          addDebugLog('FCM LISTENER', 'Notificação recebida:', notif);
         });
 
-        // Listener para notificações clicadas/abertas
-        actionListener = await PushNotifications.addListener('pushNotificationActionPerformed', (action) => {
-          addDebugLog('FCM DEBUG', 'NOTIFICAÇÃO CLICADA/ABERTA!', action);
-          (window as any).__DEBUG_PUSH.lastReceived = action;
+        actionListener = PushNotifications.addListener('pushNotificationActionPerformed', (action: any) => {
+          addDebugLog('FCM LISTENER', '=== pushNotificationActionPerformed (NOTIFICAÇÃO CLICADA) ===');
+          addDebugLog('FCM LISTENER', 'Ação recebida:', action);
         });
+
+        addDebugLog('FCM', 'Listeners adicionados com sucesso');
 
         // 2. Solicitar permissão
-        addDebugLog('FCM DEBUG', 'Solicitando permissão de notificações...');
-        const permStatus = await PushNotifications.requestPermissions();
+        addDebugLog('FCM', 'Chamando PushNotifications.requestPermissions()...');
+        let permStatus: any = null;
         
-        if (permStatus.receive !== 'granted') {
-          addDebugLog('FCM ERROR', 'Permissão de notificações negada!');
+        try {
+          permStatus = await PushNotifications.requestPermissions();
+          addDebugLog('FCM', 'requestPermissions() retornou:', permStatus);
+        } catch (permErr) {
+          addDebugLog('FCM ERRO', 'Erro no requestPermissions():', permErr);
           return;
         }
-        
-        addDebugLog('FCM DEBUG', 'Permissão de notificações CONCEDIDA!');
 
-        // 3. Registrar push notifications
-        addDebugLog('FCM DEBUG', 'Registrando FCM...');
-        await PushNotifications.register();
-        addDebugLog('FCM DEBUG', 'Registro FCM concluído!');
-        
-        addDebugLog('FCM DEBUG', 'Sistema FCM inicializado com sucesso!');
-      } catch (err) {
-        addDebugLog('FCM ERROR', 'Erro ao configurar FCM', err);
+        if (!permStatus || permStatus.receive !== 'granted') {
+          addDebugLog('FCM', 'Permissão negada ou inválida, saindo');
+          return;
+        }
+
+        addDebugLog('FCM', 'Permissão concedida! Aguardando 1 segundo...');
+        await new Promise(resolve => setTimeout(resolve, 1000));
+
+        // 3. Criar canal de notificação explícitamente
+        addDebugLog('FCM', 'Criando canal de notificação Android...');
+        try {
+          await PushNotifications.createChannel({
+            id: 'gabi_manicure_channel_high_importance',
+            name: 'Notificações Gabi Manicure',
+            description: 'Notificações importantes do app Gabi Manicure',
+            importance: 5, // IMPORTANCE_HIGH para heads-up notification
+            sound: 'default',
+            vibration: true,
+            visibility: 1, // VISIBILITY_PUBLIC
+            lights: true
+          });
+          addDebugLog('FCM', 'Canal de notificação criado com sucesso!');
+        } catch (channelErr) {
+          addDebugLog('FCM ERRO', 'Erro ao criar canal:', channelErr);
+        }
+
+        // 4. Registrar apenas uma vez
+        if (!isRegistered) {
+          addDebugLog('FCM', 'Chamando PushNotifications.register()...');
+          try {
+            await PushNotifications.register();
+            isRegistered = true;
+            addDebugLog('FCM', 'register() concluído com sucesso!');
+          } catch (registerErr) {
+            addDebugLog('FCM ERRO', 'Erro no register():', registerErr);
+          }
+        } else {
+          addDebugLog('FCM', 'register() já foi chamado anteriormente');
+        }
+
+        addDebugLog('FCM', '=== setupFCM CONCLUÍDO ===');
+      } catch (topLevelErr) {
+        addDebugLog('FCM ERRO', 'Erro TOP LEVEL no setupFCM:', topLevelErr);
       }
     };
 
@@ -145,33 +320,29 @@ function App(props: { children: React.ReactNode }) {
 
     // Cleanup listeners ao desmontar
     return () => {
+      addDebugLog('FCM', 'Cleanup listeners');
       try {
         if (tokenListener) tokenListener.remove();
         if (errorListener) errorListener.remove();
         if (notificationListener) notificationListener.remove();
         if (actionListener) actionListener.remove();
-      } catch (err) {
-        addDebugLog('FCM ERROR', 'Erro ao limpar listeners', err);
+      } catch (e) {
+        addDebugLog('FCM ERRO', 'Erro no cleanup:', e);
       }
     };
-  }, []);
+  }, [currentUser?.id]);
 
   // ========================================
   // 2. Quando o usuário logar, salva o token armazenado (se houver)
   // ========================================
   useEffect(() => {
-    if (!currentUser?.id) {
-      addDebugLog('FCM DEBUG', 'Nenhum usuário logado');
+    if (!currentUser?.id || !fcmTokenRef.current) {
       return;
     }
 
-    addDebugLog('FCM DEBUG', 'Usuário logado!', { userId: currentUser.id, email: currentUser.email });
-
-    // Se temos um token armazenado, salva agora
-    if (fcmTokenRef.current) {
-      addDebugLog('FCM DEBUG', 'Token FCM armazenado encontrado, salvando...');
+    try {
       saveTokenToFirestore(fcmTokenRef.current, currentUser.id);
-    }
+    } catch {}
   }, [currentUser?.id]);
 
   useEffect(() => {
