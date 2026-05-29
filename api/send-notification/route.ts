@@ -1,87 +1,152 @@
 import { NextRequest, NextResponse } from 'next/server';
 import admin from 'firebase-admin';
 
-console.log('[API send-notification] Starting...');
+console.log(`[${new Date().toISOString()}] [API send-notification] Starting...`);
 
 // Initialize Firebase Admin SDK (only once)
+let firebaseAdminInitialized = false;
+let serviceAccountLoaded = false;
 if (!admin.apps.length) {
-  console.log('[API send-notification] Initializing Firebase Admin...');
+  console.log(`[${new Date().toISOString()}] [API send-notification] Initializing Firebase Admin...`);
   // We need the service account JSON from environment variable
   const serviceAccountBase64 = process.env.FIREBASE_SERVICE_ACCOUNT_BASE64 || '';
-  console.log('[API send-notification] Service account base64:', serviceAccountBase64 ? 'found' : 'NOT FOUND!');
+  console.log(`[${new Date().toISOString()}] [API send-notification] FIREBASE_SERVICE_ACCOUNT_BASE64 exists:`, !!serviceAccountBase64);
   
   if (serviceAccountBase64) {
     try {
       const serviceAccount = JSON.parse(
         Buffer.from(serviceAccountBase64, 'base64').toString('utf-8')
       );
-      console.log('[API send-notification] Service account parsed successfully');
+      serviceAccountLoaded = true;
+      console.log(`[${new Date().toISOString()}] [API send-notification] Service account parsed successfully`);
       
       admin.initializeApp({
         credential: admin.credential.cert(serviceAccount)
       });
-      console.log('[API send-notification] Firebase Admin initialized');
+      firebaseAdminInitialized = true;
+      console.log(`[${new Date().toISOString()}] [API send-notification] Firebase Admin initialized ✅`);
     } catch (initError) {
-      console.error('[API send-notification] Error initializing Firebase Admin:', initError);
+      console.error(`[${new Date().toISOString()}] [API send-notification] Error initializing Firebase Admin:`, initError);
     }
   } else {
-    console.error('[API send-notification] FIREBASE_SERVICE_ACCOUNT_BASE64 is not set!');
+    console.error(`[${new Date().toISOString()}] [API send-notification] FIREBASE_SERVICE_ACCOUNT_BASE64 is not set!`);
   }
+} else {
+  firebaseAdminInitialized = true;
+  serviceAccountLoaded = true;
+  console.log(`[${new Date().toISOString()}] [API send-notification] Firebase Admin already initialized ✅`);
 }
 
 export async function POST(request: NextRequest) {
-  console.log('[API send-notification] Received POST request');
+  console.log(`\n[${new Date().toISOString()}] [API send-notification] Received POST request`);
   try {
     const body = await request.json();
-    console.log('[API send-notification] Request body:', body);
+    console.log(`[${new Date().toISOString()}] [API send-notification] Request body received:`, JSON.stringify(body, null, 2));
+    
     const { title, body: messageBody, fcmTokens, data = {} } = body;
 
     if (!fcmTokens || fcmTokens.length === 0) {
-      console.error('[API send-notification] No FCM tokens provided');
+      console.error(`[${new Date().toISOString()}] [API send-notification] No FCM tokens provided ❌`);
       return NextResponse.json(
         { error: 'No FCM tokens provided' },
         { status: 400 }
       );
     }
 
-    console.log('[API send-notification] Preparing to send', fcmTokens.length, 'messages');
+    console.log(`[${new Date().toISOString()}] [API send-notification] Tokens received (${fcmTokens.length}):`, fcmTokens.map((t: string) => `${t.substring(0, 10)}...`));
+    console.log(`[${new Date().toISOString()}] [API send-notification] Preparing to send notifications...`);
 
-    const messages = fcmTokens.map(token => ({
+    const messages = fcmTokens.map((token: string) => ({
       token,
       notification: {
         title,
         body: messageBody
       },
-      data,
+      data: {
+        ...data,
+        click_action: "FLUTTER_NOTIFICATION_CLICK" // For compatibility
+      },
       android: {
         priority: 'high' as const,
+        ttl: 3600 * 1000, // 1 hour
         notification: {
           channelId: 'gabi_manicure_channel_high_importance',
-          sound: 'default'
+          sound: 'default',
+          icon: '@mipmap/ic_launcher',
+          tag: 'gabi_manicure_notification',
+          color: '#e8558f',
+          clickAction: 'FLUTTER_NOTIFICATION_CLICK'
+        }
+      },
+      apns: { // Just in case we ever have iOS
+        payload: {
+          aps: {
+            sound: 'default',
+            alert: {
+              title,
+              body: messageBody
+            },
+            badge: 1
+          }
         }
       }
     }));
 
-    console.log('[API send-notification] Sending messages:', messages);
+    console.log(`[${new Date().toISOString()}] [API send-notification] Messages prepared:`, JSON.stringify(messages.map(m => ({ ...m, token: m.token?.substring(0,10) + '...' })), null, 2));
 
-    const results = await Promise.all(
-      messages.map(msg => 
-        admin.messaging().send(msg).then((result) => {
-          console.log('[API send-notification] Message sent successfully:', result);
-          return result;
-        }).catch(error => {
-          console.error('[API send-notification] Error sending individual message:', error);
-          return { error: String(error) };
-        })
-      )
+    if (!firebaseAdminInitialized) {
+      console.error(`[${new Date().toISOString()}] [API send-notification] Firebase Admin not initialized, cannot send notifications ❌`);
+      return NextResponse.json({ 
+        error: 'Firebase Admin not initialized', 
+        firebaseAdminInitialized, 
+        serviceAccountLoaded 
+      }, { status: 500 });
+    }
+
+    console.log(`[${new Date().toISOString()}] [API send-notification] Calling sendEachForMulticast...`);
+    const response = await admin.messaging().sendEachForMulticast({ messages });
+    
+    console.log(`\n[${new Date().toISOString()}] [API send-notification] Multicast send completed!`);
+    console.log(`[${new Date().toISOString()}] [API send-notification] Success count:`, response.successCount, '✅');
+    console.log(`[${new Date().toISOString()}] [API send-notification] Failure count:`, response.failureCount, '❌');
+    console.log(`[${new Date().toISOString()}] [API send-notification] Individual results:`, 
+      response.responses.map((r, i) => ({
+        tokenPrefix: fcmTokens[i].substring(0,10),
+        success: r.success,
+        messageId: r.messageId,
+        error: r.error ? {
+          code: r.error.code,
+          message: r.error.message
+        } : null
+      }))
     );
 
-    console.log('[API send-notification] All messages sent, results:', results);
-    return NextResponse.json({ success: true, results });
+    return NextResponse.json({ 
+      success: true, 
+      successCount: response.successCount, 
+      failureCount: response.failureCount,
+      responses: response.responses.map((r, i) => ({
+        tokenPrefix: fcmTokens[i].substring(0,10),
+        success: r.success,
+        messageId: r.messageId,
+        error: r.error ? {
+          code: r.error.code,
+          message: r.error.message
+        } : null
+      })),
+      firebaseAdminInitialized,
+      serviceAccountLoaded
+    });
   } catch (error) {
-    console.error('[API send-notification] Error sending notification:', error);
+    console.error(`[${new Date().toISOString()}] [API send-notification] Error sending notification:`, error);
     return NextResponse.json(
-      { error: 'Internal server error', details: String(error) },
+      { 
+        error: 'Internal server error', 
+        details: String(error),
+        stack: error instanceof Error ? error.stack : undefined,
+        firebaseAdminInitialized,
+        serviceAccountLoaded
+      },
       { status: 500 }
     );
   }

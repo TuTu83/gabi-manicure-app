@@ -301,3 +301,34 @@ export async function updateUserFcmToken(userId: string, fcmToken: string): Prom
     console.error('[Admin] falha ao salvar token FCM', error);
   }
 }
+
+export async function getAdminFcmTokens(): Promise<string[]> {
+  if (!isFirebaseConfigured()) {
+    console.warn('[Admin] Firebase not configured, no admin tokens');
+    return [];
+  }
+  const db = getFirebaseDb();
+  if (!db) {
+    console.warn('[Admin] DB not available, no admin tokens');
+    return [];
+  }
+  try {
+    const q = query(
+      collection(db, 'users'), 
+      where('email', '==', ADMIN_EMAIL)
+    );
+    const snap = await (await import('firebase/firestore')).getDocs(q);
+    const tokens: string[] = [];
+    snap.forEach(doc => {
+      const data = doc.data() as any;
+      if (data.fcmToken) {
+        tokens.push(data.fcmToken);
+      }
+    });
+    console.log('[Admin] Admin FCM tokens found:', tokens.length, tokens.map(t => `${t.substring(0,10)}...`));
+    return tokens;
+  } catch (error) {
+    console.error('[Admin] falha ao obter tokens FCM do admin', error);
+    return [];
+  }
+}

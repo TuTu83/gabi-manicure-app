@@ -20,6 +20,7 @@ import { removeUndefinedFields } from '@/services/firebase';
 import { getLocalSettings } from '@/services/settingsService';
 import { consumeRateLimit } from '@/services/storage';
 import { ensurePaymentForFinalizedAppointment } from '@/services/financeService';
+import { getAdminFcmTokens } from '@/services/adminService';
 import type { Appointment, AppointmentReview, AppointmentStatus, LoyaltySummary, WaitlistEntry } from '@/types/booking';
 import type { PaymentMethod } from '@/types/finance';
 import type { UserProfile } from '@/types/user';
@@ -382,17 +383,16 @@ export async function createAppointment(input: Omit<Appointment, 'id' | 'created
   // Send FCM notifications
   console.log('[createAppointment] Preparing to send FCM notifications...');
   try {
-    const adminFcmToken = await getAdminFcmToken();
+    const adminFcmTokens = await getAdminFcmTokens();
     const clientFcmToken = await getUserFcmToken(input.userId);
     
     const dateStr = dayjs(startAt).format('DD/MM/YYYY');
     const timeStr = dayjs(startAt).format('HH:mm');
     
-    const tokensToSend: string[] = [];
-    if (adminFcmToken) tokensToSend.push(adminFcmToken);
+    const tokensToSend: string[] = [...adminFcmTokens];
     if (clientFcmToken) tokensToSend.push(clientFcmToken);
     
-    console.log('[createAppointment] Tokens to send:', tokensToSend);
+    console.log('[createAppointment] Tokens to send:', tokensToSend.map(t => `${t.substring(0,10)}...`));
     
     if (tokensToSend.length > 0) {
       console.log('[createAppointment] Calling sendFcmNotification...');
@@ -457,17 +457,16 @@ export async function cancelAppointment(appointmentId: string): Promise<void> {
   console.log('[cancelAppointment] Preparing to send FCM notifications...');
   if (appointmentData) {
     try {
-      const adminFcmToken = await getAdminFcmToken();
+      const adminFcmTokens = await getAdminFcmTokens();
       const clientFcmToken = await getUserFcmToken(appointmentData.userId);
       
       const dateStr = dayjs(appointmentData.startAt).format('DD/MM/YYYY');
       const timeStr = dayjs(appointmentData.startAt).format('HH:mm');
       
-      const tokensToSend: string[] = [];
-      if (adminFcmToken) tokensToSend.push(adminFcmToken);
+      const tokensToSend: string[] = [...adminFcmTokens];
       if (clientFcmToken) tokensToSend.push(clientFcmToken);
       
-      console.log('[cancelAppointment] Tokens to send:', tokensToSend);
+      console.log('[cancelAppointment] Tokens to send:', tokensToSend.map(t => `${t.substring(0,10)}...`));
       
       if (tokensToSend.length > 0) {
         console.log('[cancelAppointment] Calling sendFcmNotification...');
@@ -599,26 +598,28 @@ export async function markOnMyWay(appointmentId: string): Promise<void> {
 
   await updateDoc(doc(db, 'appointments', appointmentId), { onMyWayAt: now, updatedAt: now });
 
-  // Send OneSignal notification to admin when client is on the way
+  // Send FCM notification to admin when client is on the way
   if (appointmentData) {
     try {
-      const adminPlayerId = await getAdminPlayerId();
+      const adminFcmTokens = await getAdminFcmTokens();
       const timeStr = dayjs(appointmentData.startAt).format('HH:mm');
       
-      if (adminPlayerId) {
-        await sendOneSignalNotification({
+      if (adminFcmTokens.length > 0) {
+        console.log('[markOnMyWay] Calling sendFcmNotification...');
+        await sendFcmNotification({
           title: 'Cliente está a caminho!',
           body: `${appointmentData.clientName} está a caminho para o horário de ${timeStr}!`,
-          playerIds: [adminPlayerId],
+          fcmTokens: adminFcmTokens,
           data: {
             type: 'client_on_my_way',
             appointmentId,
             url: '/pages/admin/index',
           },
         });
+        console.log('[markOnMyWay] sendFcmNotification completed');
       }
     } catch (error) {
-      console.error('Error sending OneSignal notification for on-my-way:', error);
+      console.error('[markOnMyWay] Error sending FCM notification for on-my-way:', error);
     }
   }
 }
@@ -635,6 +636,22 @@ export async function rescheduleAppointment(params: {
   if (endAt <= Date.now()) throw new Error('Não é possível reagendar para horário passado');
   const rl = consumeRateLimit({ key: `reschedule:${appointmentId}`, max: 2, windowMs: 15000 });
   if (!rl.allowed) throw new Error('Muitas ações seguidas. Aguarde alguns segundos e tente novamente.');
+
+  // First get the appointment data for notification
+  let appointmentData: Appointment | null = null;
+  if (isFirebaseConfigured()) {
+    try {
+      const db = getFirebaseDb();
+      if (db) {
+        const appointmentDoc = await getDoc(doc(db, 'appointments', appointmentId));
+        if (appointmentDoc.exists()) {
+          appointmentData = { id: appointmentDoc.id, ...(appointmentDoc.data() as Omit<Appointment, 'id'>) };
+        }
+      }
+    } catch (error) {
+      console.error('[rescheduleAppointment] Error getting appointment for notification:', error);
+    }
+  }
 
   if (!isFirebaseConfigured()) {
     const all = safeGetArray<Appointment>(appointmentsKey);
@@ -695,6 +712,44 @@ export async function rescheduleAppointment(params: {
       updatedAt: Date.now(),
     });
   });
+
+  // Send FCM notifications for reschedule
+  console.log('[rescheduleAppointment] Preparing to send FCM notifications...');
+  if (appointmentData) {
+    try {
+      const adminFcmTokens = await getAdminFcmTokens();
+      const clientFcmToken = await getUserFcmToken(appointmentData.userId);
+      
+      const dateStr = dayjs(startAt).format('DD/MM/YYYY');
+      const timeStr = dayjs(startAt).format('HH:mm');
+      
+      const tokensToSend: string[] = [...adminFcmTokens];
+      if (clientFcmToken) tokensToSend.push(clientFcmToken);
+      
+      console.log('[rescheduleAppointment] Tokens to send:', tokensToSend.map(t => `${t.substring(0,10)}...`));
+      
+      if (tokensToSend.length > 0) {
+        console.log('[rescheduleAppointment] Calling sendFcmNotification...');
+        await sendFcmNotification({
+          title: 'Agendamento Reagendado!',
+          body: `${appointmentData.clientName} reagendou para ${dateStr} às ${timeStr}`,
+          fcmTokens: tokensToSend,
+          data: {
+            type: 'appointment_rescheduled',
+            appointmentId,
+            url: '/pages/admin/index',
+          },
+        });
+        console.log('[rescheduleAppointment] sendFcmNotification completed');
+      } else {
+        console.warn('[rescheduleAppointment] No tokens to send!');
+      }
+    } catch (error) {
+      console.error('[rescheduleAppointment] Error sending FCM notifications for reschedule:', error);
+    }
+  } else {
+    console.warn('[rescheduleAppointment] No appointment data found!');
+  }
 }
 
 export async function saveReview(input: Omit<AppointmentReview, 'id' | 'createdAt'>): Promise<AppointmentReview> {
