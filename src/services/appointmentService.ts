@@ -30,36 +30,54 @@ const waitlistKey = 'gm.waitlist';
 
 async function getAdminFcmToken(): Promise<string | null> {
   try {
+    console.log('[getAdminFcmToken] Starting...');
     const db = getFirebaseDb();
-    if (!db) return null;
+    if (!db) {
+      console.error('[getAdminFcmToken] Firebase DB not available');
+      return null;
+    }
     
     const q = query(collection(db, 'users'), where('role', '==', 'admin'), limit(1));
     const snap = await getDocs(q);
     
+    console.log('[getAdminFcmToken] Found', snap.size, 'admin users');
+    
     if (!snap.empty) {
       const adminData = snap.docs[0].data() as UserProfile;
-      return adminData.fcmToken || null;
+      const token = adminData.fcmToken || null;
+      console.log('[getAdminFcmToken] Admin FCM token:', token ? 'found' : 'NOT FOUND');
+      console.log('[getAdminFcmToken] Admin data:', adminData);
+      return token;
     }
+    console.error('[getAdminFcmToken] No admin user found!');
     return null;
   } catch (error) {
-    console.error('Error getting admin FCM token:', error);
+    console.error('[getAdminFcmToken] Error getting admin FCM token:', error);
     return null;
   }
 }
 
 async function getUserFcmToken(userId: string): Promise<string | null> {
   try {
+    console.log('[getUserFcmToken] Starting for user:', userId);
     const db = getFirebaseDb();
-    if (!db) return null;
+    if (!db) {
+      console.error('[getUserFcmToken] Firebase DB not available');
+      return null;
+    }
     
     const userDoc = await getDoc(doc(db, 'users', userId));
     if (userDoc.exists()) {
       const userData = userDoc.data() as UserProfile;
-      return userData.fcmToken || null;
+      const token = userData.fcmToken || null;
+      console.log('[getUserFcmToken] User FCM token:', token ? 'found' : 'NOT FOUND');
+      console.log('[getUserFcmToken] User data:', userData);
+      return token;
     }
+    console.error('[getUserFcmToken] User not found:', userId);
     return null;
   } catch (error) {
-    console.error('Error getting user FCM token:', error);
+    console.error('[getUserFcmToken] Error getting user FCM token:', error);
     return null;
   }
 }
@@ -76,19 +94,30 @@ async function sendFcmNotification({
   data?: Record<string, any>;
 }) {
   try {
-    const response = await fetch('/api/send-notification', {
+    // Use the full production URL for the API
+    const apiUrl = 'https://gabi-manicure-app.vercel.app/api/send-notification';
+    console.log('[sendFcmNotification] Sending to:', apiUrl);
+    console.log('[sendFcmNotification] Payload:', { title, body, fcmTokens, data });
+    
+    const response = await fetch(apiUrl, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ title, body, fcmTokens, data }),
     });
     
+    console.log('[sendFcmNotification] Response status:', response.status);
+    
     if (!response.ok) {
-      throw new Error(`API error: ${response.status}`);
+      const errorText = await response.text();
+      console.error('[sendFcmNotification] API error response:', errorText);
+      throw new Error(`API error: ${response.status} - ${errorText}`);
     }
     
-    return await response.json();
+    const result = await response.json();
+    console.log('[sendFcmNotification] Success:', result);
+    return result;
   } catch (error) {
-    console.error('Error sending FCM notification:', error);
+    console.error('[sendFcmNotification] Error sending FCM notification:', error);
     throw error;
   }
 }
@@ -270,6 +299,7 @@ export function subscribeBusyForProfessionalDay(params: {
 }
 
 export async function createAppointment(input: Omit<Appointment, 'id' | 'createdAt' | 'updatedAt' | 'status'>): Promise<Appointment> {
+  console.log('[createAppointment] Starting with input:', input);
   const startAt = input.startAt;
   const endAt = input.endAt;
   if (endAt <= Date.now()) throw new Error('Não é possível agendar em horário passado');
@@ -349,6 +379,7 @@ export async function createAppointment(input: Omit<Appointment, 'id' | 'created
   });
 
   // Send FCM notifications
+  console.log('[createAppointment] Preparing to send FCM notifications...');
   try {
     const adminFcmToken = await getAdminFcmToken();
     const clientFcmToken = await getUserFcmToken(input.userId);
@@ -360,7 +391,10 @@ export async function createAppointment(input: Omit<Appointment, 'id' | 'created
     if (adminFcmToken) tokensToSend.push(adminFcmToken);
     if (clientFcmToken) tokensToSend.push(clientFcmToken);
     
+    console.log('[createAppointment] Tokens to send:', tokensToSend);
+    
     if (tokensToSend.length > 0) {
+      console.log('[createAppointment] Calling sendFcmNotification...');
       await sendFcmNotification({
         title: 'Novo Agendamento!',
         body: `${input.clientName} agendou para ${dateStr} às ${timeStr}`,
@@ -371,15 +405,19 @@ export async function createAppointment(input: Omit<Appointment, 'id' | 'created
           url: '/pages/admin/index',
         },
       });
+      console.log('[createAppointment] sendFcmNotification completed');
+    } else {
+      console.warn('[createAppointment] No tokens to send!');
     }
   } catch (error) {
-    console.error('Error sending FCM notifications for new appointment:', error);
+    console.error('[createAppointment] Error sending FCM notifications for new appointment:', error);
   }
 
   return appointment;
 }
 
 export async function cancelAppointment(appointmentId: string): Promise<void> {
+  console.log('[cancelAppointment] Starting with appointmentId:', appointmentId);
   if (!appointmentId) return;
   const rl = consumeRateLimit({ key: `cancelAppointment:${appointmentId}`, max: 2, windowMs: 8000 });
   if (!rl.allowed) throw new Error('Muitas ações seguidas. Aguarde alguns segundos e tente novamente.');
@@ -415,6 +453,7 @@ export async function cancelAppointment(appointmentId: string): Promise<void> {
   });
 
   // Send FCM notifications for cancellation
+  console.log('[cancelAppointment] Preparing to send FCM notifications...');
   if (appointmentData) {
     try {
       const adminFcmToken = await getAdminFcmToken();
@@ -427,7 +466,10 @@ export async function cancelAppointment(appointmentId: string): Promise<void> {
       if (adminFcmToken) tokensToSend.push(adminFcmToken);
       if (clientFcmToken) tokensToSend.push(clientFcmToken);
       
+      console.log('[cancelAppointment] Tokens to send:', tokensToSend);
+      
       if (tokensToSend.length > 0) {
+        console.log('[cancelAppointment] Calling sendFcmNotification...');
         await sendFcmNotification({
           title: 'Agendamento Cancelado',
           body: `${appointmentData.clientName} cancelou o agendamento de ${dateStr} às ${timeStr}`,
@@ -438,10 +480,15 @@ export async function cancelAppointment(appointmentId: string): Promise<void> {
             url: '/pages/admin/index',
           },
         });
+        console.log('[cancelAppointment] sendFcmNotification completed');
+      } else {
+        console.warn('[cancelAppointment] No tokens to send!');
       }
     } catch (error) {
-      console.error('Error sending FCM notifications for cancellation:', error);
+      console.error('[cancelAppointment] Error sending FCM notifications for cancellation:', error);
     }
+  } else {
+    console.warn('[cancelAppointment] No appointment data found!');
   }
 }
 
