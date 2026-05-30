@@ -18,11 +18,13 @@ const DashboardPage: React.FC = () => {
     lastSent: any;
     lastReceived: any;
     lastError: any;
+    lastApiCall: any;
   }>({
     logs: [],
     lastSent: null,
     lastReceived: null,
     lastError: null,
+    lastApiCall: null,
   });
   const [diagnostics, setDiagnostics] = useState<any>({});
   const [fcmToken, setFcmToken] = useState<string | null>(null);
@@ -37,6 +39,7 @@ const DashboardPage: React.FC = () => {
       lastSent: null,
       lastReceived: null,
       lastError: null,
+      lastApiCall: null,
     };
 
     if (isBrowser) {
@@ -349,9 +352,9 @@ const DashboardPage: React.FC = () => {
             <Text style={{ fontSize: '13px', color: '#6b7280' }}>Token FCM</Text>
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: '8px' }}>
               <Text style={{ fontSize: '13px', color: '#374151', fontFamily: 'monospace' }} selectable>
-                {fcmToken ? `${fcmToken.substring(0, 12)}...` : 'Carregando...'}
+                {fcmToken || 'Não aplicável (web)'}
               </Text>
-              {fcmToken && <Button onClick={copyFcmToken} style={{ padding: '4px 8px', fontSize: '11px', backgroundColor: '#e0e7ff', color: '#4338ca', border: 'none', borderRadius: '6px' }}>📋</Button>}
+              {fcmToken && fcmToken !== 'Disponível apenas no app nativo Android' && <Button onClick={copyFcmToken} style={{ padding: '4px 8px', fontSize: '11px', backgroundColor: '#e0e7ff', color: '#4338ca', border: 'none', borderRadius: '6px' }}>📋</Button>}
             </View>
           </View>
           
@@ -363,6 +366,88 @@ const DashboardPage: React.FC = () => {
           </View>
         </View>
       </Card>
+
+      {debugData.lastApiCall && (
+        <Card title="Status API send-notification" icon="🌐">
+          <View style={{ gap: '12px' }}>
+            <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+              <Text style={{ fontSize: '13px', color: '#6b7280' }}>Timestamp</Text>
+              <Text style={{ fontSize: '13px', color: '#374151', fontWeight: '500' }}>
+                {new Date(debugData.lastApiCall.timestamp).toLocaleString('pt-BR')}
+              </Text>
+            </View>
+            
+            <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+              <Text style={{ fontSize: '13px', color: '#6b7280' }}>URL</Text>
+              <Text style={{ fontSize: '13px', color: '#374151', fontFamily: 'monospace' }} selectable>
+                {debugData.lastApiCall.url}
+              </Text>
+            </View>
+            
+            <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+              <Text style={{ fontSize: '13px', color: '#6b7280' }}>Status HTTP</Text>
+              <Text style={{ 
+                fontSize: '13px', 
+                fontWeight: 'bold',
+                color: (typeof debugData.lastApiCall.status === 'number' && debugData.lastApiCall.status < 300) 
+                  ? '#10b981' 
+                  : '#ef4444'
+              }}>
+                {debugData.lastApiCall.status}
+              </Text>
+            </View>
+            
+            <View style={{ gap: '8px' }}>
+              <Text style={{ fontSize: '13px', color: '#6b7280' }}>Payload Enviado</Text>
+              <Text style={{ 
+                fontSize: '11px', 
+                color: '#374151', 
+                fontFamily: 'monospace', 
+                wordBreak: 'break-all',
+                backgroundColor: '#f3f4f6',
+                padding: '12px',
+                borderRadius: '8px'
+              }} selectable>
+                {JSON.stringify(debugData.lastApiCall.payload, null, 2)}
+              </Text>
+            </View>
+            
+            {debugData.lastApiCall.response && (
+              <View style={{ gap: '8px' }}>
+                <Text style={{ fontSize: '13px', color: '#6b7280' }}>Resposta</Text>
+                <Text style={{ 
+                  fontSize: '11px', 
+                  color: '#166534', 
+                  fontFamily: 'monospace', 
+                  wordBreak: 'break-all',
+                  backgroundColor: '#f0fdf4',
+                  padding: '12px',
+                  borderRadius: '8px'
+                }} selectable>
+                  {JSON.stringify(debugData.lastApiCall.response, null, 2)}
+                </Text>
+              </View>
+            )}
+            
+            {debugData.lastApiCall.error && (
+              <View style={{ gap: '8px' }}>
+                <Text style={{ fontSize: '13px', color: '#6b7280' }}>Erro</Text>
+                <Text style={{ 
+                  fontSize: '11px', 
+                  color: '#991b1b', 
+                  fontFamily: 'monospace', 
+                  wordBreak: 'break-all',
+                  backgroundColor: '#fef2f2',
+                  padding: '12px',
+                  borderRadius: '8px'
+                }} selectable>
+                  {debugData.lastApiCall.error}
+                </Text>
+              </View>
+            )}
+          </View>
+        </Card>
+      )}
 
       <Card title="Botões de Ação" icon="🧪">
         <View style={{ gap: '10px' }}>

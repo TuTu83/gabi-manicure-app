@@ -1,4 +1,4 @@
-import { NextRequest, NextResponse } from 'next/server';
+import type { VercelRequest, VercelResponse } from '@vercel/node';
 import admin from 'firebase-admin';
 
 console.log(`[${new Date().toISOString()}] [API send-notification] Starting...`);
@@ -63,10 +63,16 @@ async function getAllUserFcmTokens(): Promise<string[]> {
   }
 }
 
-export async function POST(request: NextRequest) {
-  console.log(`\n[${new Date().toISOString()}] [API send-notification] Received POST request`);
+export default async function handler(request: VercelRequest, response: VercelResponse) {
+  console.log(`\n[${new Date().toISOString()}] [API send-notification] Received ${request.method} request`);
+  
+  // Only allow POST
+  if (request.method !== 'POST') {
+    return response.status(405).json({ error: 'Method not allowed' });
+  }
+
   try {
-    const body = await request.json();
+    const body = request.body;
     console.log(`[${new Date().toISOString()}] [API send-notification] Request body received:`, JSON.stringify(body, null, 2));
     
     const { title, body: messageBody, fcmTokens, sendToAll = false, data = {} } = body;
@@ -81,9 +87,8 @@ export async function POST(request: NextRequest) {
 
     if (!tokensToUse || tokensToUse.length === 0) {
       console.error(`[${new Date().toISOString()}] [API send-notification] No FCM tokens provided ❌`);
-      return NextResponse.json(
-        { error: 'No FCM tokens provided' },
-        { status: 400 }
+      return response.status(400).json(
+        { error: 'No FCM tokens provided' }
       );
     }
 
@@ -126,27 +131,27 @@ export async function POST(request: NextRequest) {
       }
     }));
 
-    console.log(`[${new Date().toISOString()}] [API send-notification] Messages prepared:`, JSON.stringify(messages.map(m => ({ ...m, token: m.token?.substring(0,10) + '...' })), null, 2));
+    console.log(`[${new Date().toISOString()}] [API send-notification] Messages prepared:`, JSON.stringify(messages.map(m => ({ ...m, token: m.token?.substring(0, 10) + '...' })), null, 2));
 
     if (!firebaseAdminInitialized) {
       console.error(`[${new Date().toISOString()}] [API send-notification] Firebase Admin not initialized, cannot send notifications ❌`);
-      return NextResponse.json({ 
+      return response.status(500).json({ 
         error: 'Firebase Admin not initialized', 
         firebaseAdminInitialized, 
         serviceAccountLoaded 
-      }, { status: 500 });
+      });
     }
 
     console.log(`[${new Date().toISOString()}] [API send-notification] Calling sendEach...`);
     // Send each message individually using sendEach
-    const response = await admin.messaging().sendEach(messages);
+    const fcmResponse = await admin.messaging().sendEach(messages);
     
     console.log(`\n[${new Date().toISOString()}] [API send-notification] Send completed!`);
-    console.log(`[${new Date().toISOString()}] [API send-notification] Success count:`, response.successCount, '✅');
-    console.log(`[${new Date().toISOString()}] [API send-notification] Failure count:`, response.failureCount, '❌');
+    console.log(`[${new Date().toISOString()}] [API send-notification] Success count:`, fcmResponse.successCount, '✅');
+    console.log(`[${new Date().toISOString()}] [API send-notification] Failure count:`, fcmResponse.failureCount, '❌');
     console.log(`[${new Date().toISOString()}] [API send-notification] Individual results:`, 
-      response.responses.map((r, i) => ({
-        tokenPrefix: tokensToUse[i].substring(0,10),
+      fcmResponse.responses.map((r, i) => ({
+        tokenPrefix: tokensToUse[i].substring(0, 10),
         success: r.success,
         messageId: r.messageId,
         error: r.error ? {
@@ -156,12 +161,12 @@ export async function POST(request: NextRequest) {
       }))
     );
 
-    return NextResponse.json({ 
+    return response.status(200).json({ 
       success: true, 
-      successCount: response.successCount, 
-      failureCount: response.failureCount,
-      responses: response.responses.map((r, i) => ({
-        tokenPrefix: tokensToUse[i].substring(0,10),
+      successCount: fcmResponse.successCount, 
+      failureCount: fcmResponse.failureCount,
+      responses: fcmResponse.responses.map((r, i) => ({
+        tokenPrefix: tokensToUse[i].substring(0, 10),
         success: r.success,
         messageId: r.messageId,
         error: r.error ? {
@@ -175,15 +180,14 @@ export async function POST(request: NextRequest) {
     });
   } catch (error) {
     console.error(`[${new Date().toISOString()}] [API send-notification] Error sending notification:`, error);
-    return NextResponse.json(
+    return response.status(500).json(
       { 
         error: 'Internal server error',
         details: String(error),
         stack: error instanceof Error ? error.stack : undefined,
         firebaseAdminInitialized,
         serviceAccountLoaded
-      },
-      { status: 500 }
+      }
     );
   }
 }

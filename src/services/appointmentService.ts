@@ -95,31 +95,72 @@ async function sendFcmNotification({
   fcmTokens: string[];
   data?: Record<string, any>;
 }) {
+  // Use the full production URL for the API
+  const apiUrl = 'https://gabi-manicure-app.vercel.app/api/send-notification';
+  const payload = { title, body, fcmTokens, data };
+  const timestamp = Date.now();
+
+  // Logs antes da chamada
+  console.log('[sendFcmNotification] 🔄 Iniciando chamada...');
+  console.log('[sendFcmNotification] Endpoint:', apiUrl);
+  console.log('[sendFcmNotification] Payload:', payload);
+  
+  // Salvar na página de debug
+  if (typeof window !== 'undefined') {
+    if (!window.__DEBUG_PUSH__) {
+      window.__DEBUG_PUSH__ = { logs: [], lastSent: null, lastReceived: null, lastError: null, lastApiCall: null };
+    }
+    window.__DEBUG_PUSH__.lastApiCall = {
+      url: apiUrl,
+      payload,
+      timestamp,
+      status: 'pending',
+    };
+  }
+
   try {
-    // Use the full production URL for the API
-    const apiUrl = 'https://gabi-manicure-app.vercel.app/api/send-notification';
-    console.log('[sendFcmNotification] Sending to:', apiUrl);
-    console.log('[sendFcmNotification] Payload:', { title, body, fcmTokens, data });
-    
     const response = await fetch(apiUrl, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ title, body, fcmTokens, data }),
+      body: JSON.stringify(payload),
     });
     
-    console.log('[sendFcmNotification] Response status:', response.status);
-    
-    if (!response.ok) {
-      const errorText = await response.text();
-      console.error('[sendFcmNotification] API error response:', errorText);
-      throw new Error(`API error: ${response.status} - ${errorText}`);
-    }
+    // Logs após a chamada
+    console.log('[sendFcmNotification] ✅ Status HTTP:', response.status);
     
     const result = await response.json();
-    console.log('[sendFcmNotification] Success:', result);
+    console.log('[sendFcmNotification] 📄 Resposta completa:', result);
+    
+    // Salvar na página de debug
+    if (typeof window !== 'undefined') {
+      window.__DEBUG_PUSH__.lastApiCall = {
+        url: apiUrl,
+        payload,
+        timestamp,
+        status: response.status,
+        response: result,
+      };
+    }
+
+    if (!response.ok) {
+      throw new Error(`API error: ${response.status}`);
+    }
+    
     return result;
   } catch (error) {
-    console.error('[sendFcmNotification] Error sending FCM notification:', error);
+    console.error('[sendFcmNotification] ❌ Erro:', error);
+    
+    // Salvar erro na página de debug
+    if (typeof window !== 'undefined') {
+      window.__DEBUG_PUSH__.lastApiCall = {
+        url: apiUrl,
+        payload,
+        timestamp,
+        status: 'error',
+        error: String(error),
+      };
+    }
+    
     throw error;
   }
 }
