@@ -519,52 +519,52 @@ const DashboardPage: React.FC = () => {
               Nenhum log encontrado
             </Text>
           ) : (
-            filteredLogs.map((log, index) => (
-              <View 
-                key={index} 
-                style={{ 
-                  borderLeftWidth: '3px', 
-                  borderLeftColor: (type: string) => {
-                    const t = type.toUpperCase();
-                    if (t.includes('ERROR')) return '#ef4444';
-                    if (t.includes('WARN') || t.includes('AVISO')) return '#f59e0b';
-                    if (t.includes('SUCCESS') || t.includes('SUCESSO')) return '#10b981';
-                    return '#3b82f6';
-                  }(log.type),
-                  borderLeftStyle: 'solid',
-                  padding: '12px 16px',
-                  backgroundColor: '#f9fafb',
-                  borderRadius: '0 10px 10px 0'
-                }}
-              >
-                <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
-                  <Text style={{ 
-                    fontSize: '12px', 
-                    fontWeight: '700', 
-                    color: (type: string) => {
-                      const t = type.toUpperCase();
-                      if (t.includes('ERROR')) return '#ef4444';
-                      if (t.includes('WARN') || t.includes('AVISO')) return '#f59e0b';
-                      if (t.includes('SUCCESS') || t.includes('SUCESSO')) return '#10b981';
-                      return '#3b82f6';
-                    }(log.type)
-                  }}>
-                    [{log.type}]
+            filteredLogs.map((log, index) => {
+              const getLogTypeColor = (type: string) => {
+                const t = type.toUpperCase();
+                if (t.includes('ERROR')) return '#ef4444';
+                if (t.includes('WARN') || t.includes('AVISO')) return '#f59e0b';
+                if (t.includes('SUCCESS') || t.includes('SUCESSO')) return '#10b981';
+                return '#3b82f6';
+              };
+              
+              const logColor = getLogTypeColor(log.type);
+              
+              return (
+                <View 
+                  key={index} 
+                  style={{ 
+                    borderLeftWidth: '3px', 
+                    borderLeftColor: logColor,
+                    borderLeftStyle: 'solid',
+                    padding: '12px 16px',
+                    backgroundColor: '#f9fafb',
+                    borderRadius: '0 10px 10px 0'
+                  }}
+                >
+                  <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
+                    <Text style={{ 
+                      fontSize: '12px', 
+                      fontWeight: '700', 
+                      color: logColor
+                    }}>
+                      [{log.type}]
+                    </Text>
+                    <Text style={{ fontSize: '10px', color: '#9ca3af' }}>
+                      {new Date(log.timestamp).toLocaleTimeString('pt-BR')}
+                    </Text>
+                  </View>
+                  <Text style={{ fontSize: '13px', color: '#374151', marginBottom: '8px' }}>
+                    {log.message}
                   </Text>
-                  <Text style={{ fontSize: '10px', color: '#9ca3af' }}>
-                    {new Date(log.timestamp).toLocaleTimeString('pt-BR')}
-                  </Text>
+                  {log.data && (
+                    <Text style={{ fontSize: '11px', color: '#6b7280', fontFamily: 'monospace', wordBreak: 'break-all' }} selectable>
+                      {typeof log.data === 'object' ? JSON.stringify(log.data, null, 2) : String(log.data)}
+                    </Text>
+                  )}
                 </View>
-                <Text style={{ fontSize: '13px', color: '#374151', marginBottom: '8px' }}>
-                  {log.message}
-                </Text>
-                {log.data && (
-                  <Text style={{ fontSize: '11px', color: '#6b7280', fontFamily: 'monospace', wordBreak: 'break-all' }} selectable>
-                    {typeof log.data === 'object' ? JSON.stringify(log.data, null, 2) : String(log.data)}
-                  </Text>
-                )}
-              </View>
-            ))
+              );
+            })
           )}
         </View>
       </Card>
