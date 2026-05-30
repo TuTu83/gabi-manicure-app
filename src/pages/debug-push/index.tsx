@@ -1,7 +1,7 @@
 import React, { useEffect, useState, useMemo } from 'react';
 import { View, Text, Button, ScrollView } from '@tarojs/components';
 import Taro from '@tarojs/taro';
-import { PushNotifications } from '@capacitor/push-notifications';
+import { Capacitor } from '@capacitor/core';
 
 type LogType = 'ERROR' | 'WARN' | 'INFO' | 'SUCCESS';
 
@@ -30,6 +30,8 @@ const DashboardPage: React.FC = () => {
 
   const refreshDebugData = () => {
     const isBrowser = typeof window !== 'undefined' && typeof navigator !== 'undefined';
+    const isNative = Capacitor.isNativePlatform();
+    
     let debugStore = {
       logs: [],
       lastSent: null,
@@ -47,7 +49,6 @@ const DashboardPage: React.FC = () => {
       const ua = String(window.navigator.userAgent || '');
       const standalone = (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches) || (window.navigator as any).standalone === true;
       const isAndroid = /Android/i.test(ua);
-      const isNative = !!(window as any).Capacitor?.isNative;
       
       const diag = {
         timestamp: new Date().toLocaleString('pt-BR'),
@@ -60,10 +61,14 @@ const DashboardPage: React.FC = () => {
       
       setDiagnostics(diag);
       
-      // Tentar obter o token salvo no store
-      const token = (window as any).__DEBUG_PUSH?.fcmToken;
-      if (token) {
-        setFcmToken(token);
+      if (!isNative) {
+        setFcmToken('Disponível apenas no app nativo Android');
+      } else {
+        // Tentar obter o token salvo no store
+        const token = (window as any).__DEBUG_PUSH?.fcmToken;
+        if (token) {
+          setFcmToken(token);
+        }
       }
     };
     
@@ -312,6 +317,22 @@ const DashboardPage: React.FC = () => {
         <Text style={{ fontSize: '14px', color: '#6b7280' }}>
           Gabi Manicure - Capacitor FCM Push
         </Text>
+        {!diagnostics?.isNative && (
+          <View style={{
+            marginTop: '16px',
+            padding: '16px',
+            backgroundColor: '#fef3c7',
+            border: '1px solid #f59e0b',
+            borderRadius: '12px'
+          }}>
+            <Text style={{ fontSize: '14px', fontWeight: '700', color: '#92400e' }}>
+              ⚠️ Aviso Importante
+            </Text>
+            <Text style={{ fontSize: '13px', color: '#78350f', marginTop: '8px' }}>
+              Notificações push FCM só funcionam no APP NATIVO Android (instalado via Android Studio), NÃO no app web/PWA!
+            </Text>
+          </View>
+        )}
       </View>
 
       <Card title="Status do Sistema" icon="🖥️">
