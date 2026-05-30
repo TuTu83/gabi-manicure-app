@@ -66,7 +66,18 @@ async function getAllUserFcmTokens(): Promise<string[]> {
 export default async function handler(request: VercelRequest, response: VercelResponse) {
   console.log(`\n[${new Date().toISOString()}] [API send-notification] Received ${request.method} request`);
   
-  // Only allow POST
+  // For testing, allow GET
+  if (request.method === 'GET') {
+    return response.status(200).json({
+      success: true,
+      message: 'send-notification API route is working!',
+      firebaseAdminInitialized,
+      serviceAccountLoaded,
+      timestamp: new Date().toISOString()
+    });
+  }
+  
+  // Only allow POST for actual functionality
   if (request.method !== 'POST') {
     return response.status(405).json({ error: 'Method not allowed' });
   }
