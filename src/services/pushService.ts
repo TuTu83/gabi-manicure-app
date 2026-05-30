@@ -98,8 +98,19 @@ const addListeners = (userId?: string) => {
   // Listener de notificação recebida com app aberto
   notificationListener = PushNotifications.addListener(
     'pushNotificationReceived',
-    (notification: PushNotificationSchema) => {
+    async (notification: PushNotificationSchema) => {
       log('Notificação recebida com app aberto', notification);
+      
+      // Mostra a notificação como banner mesmo com som e som/vibração mesmo com app aberto
+      await PushNotifications.localNotification({
+        title: notification.title || 'Nova Notificação',
+        body: notification.body || '',
+        id: Math.floor(Math.random() * 100000),
+        sound: 'default',
+        soundName: 'default',
+        channelId: ANDROID_CHANNEL_ID,
+        data: notification.data
+      });
     }
   );
 
