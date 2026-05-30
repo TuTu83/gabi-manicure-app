@@ -6,10 +6,8 @@ console.log(`[${new Date().toISOString()}] [API send-notification] Starting...`)
 // Initialize Firebase Admin SDK (only once)
 let firebaseAdminInitialized = false;
 let serviceAccountLoaded = false;
-let db: FirebaseFirestore.Firestore | null = null;
 if (!admin.apps.length) {
   console.log(`[${new Date().toISOString()}] [API send-notification] Initializing Firebase Admin...`);
-  // We need the service account JSON from environment variable
   const serviceAccountBase64 = process.env.FIREBASE_SERVICE_ACCOUNT_BASE64 || '';
   console.log(`[${new Date().toISOString()}] [API send-notification] FIREBASE_SERVICE_ACCOUNT_BASE64 exists:`, !!serviceAccountBase64);
   
@@ -21,10 +19,9 @@ if (!admin.apps.length) {
       serviceAccountLoaded = true;
       console.log(`[${new Date().toISOString()}] [API send-notification] Service account parsed successfully`);
       
-      const app = admin.initializeApp({
+      admin.initializeApp({
         credential: admin.credential.cert(serviceAccount)
       });
-      db = admin.firestore(app);
       firebaseAdminInitialized = true;
       console.log(`[${new Date().toISOString()}] [API send-notification] Firebase Admin initialized ✅`);
     } catch (initError) {
@@ -36,81 +33,61 @@ if (!admin.apps.length) {
 } else {
   firebaseAdminInitialized = true;
   serviceAccountLoaded = true;
-  db = admin.firestore();
   console.log(`[${new Date().toISOString()}] [API send-notification] Firebase Admin already initialized ✅`);
-}
-
-// Função para pegar todos os tokens FCM dos usuários
-async function getAllUserFcmTokens(): Promise<string[]> {
-  if (!db) {
-    console.warn(`[${new Date().toISOString()}] [API send-notification] Firestore DB not available`);
-    return [];
-  }
-  try {
-    const usersSnapshot = await db.collection('users').get();
-    const tokens: string[] = [];
-    usersSnapshot.forEach(doc => {
-      const userData = doc.data();
-      if (userData.fcmToken) {
-        tokens.push(userData.fcmToken);
-      }
-    });
-    console.log(`[${new Date().toISOString()}] [API send-notification] Found ${tokens.length} user FCM tokens`);
-    return tokens;
-  } catch (error) {
-    console.error(`[${new Date().toISOString()}] [API send-notification] Error fetching user tokens:`, error);
-    return [];
-  }
 }
 
 export default async function handler(request: VercelRequest, response: VercelResponse) {
   console.log(`\n[${new Date().toISOString()}] [API send-notification] Received ${request.method} request`);
   
-  // For testing, allow GET
-  if (request.method === 'GET') {
-    return response.status(200).json({
-      success: true,
-      message: 'send-notification API route is working!',
-      firebaseAdminInitialized,
-      serviceAccountLoaded,
-      timestamp: new Date().toISOString()
-    });
-  }
-  
-  // Only allow POST for actual functionality
+  // Only allow POST
   if (request.method !== 'POST') {
-    return response.status(405).json({ error: 'Method not allowed' });
+    console.log(`[${new Date().toISOString()}] [API send-notification] Method not allowed: ${request.method}`);
+    return response.status(405).json({ error: "Method not allowed. Use POST." });
   }
 
   try {
     const body = request.body;
     console.log(`[${new Date().toISOString()}] [API send-notification] Request body received:`, JSON.stringify(body, null, 2));
     
-    const { title, body: messageBody, fcmTokens, sendToAll = false, data = {} } = body;
-
-    // Decide quais tokens usar: os fornecidos ou todos os usuários
-    let tokensToUse: string[] = [];
-    if (sendToAll) {
-      tokensToUse = await getAllUserFcmTokens();
-    } else {
-      tokensToUse = fcmTokens || [];
+    // Validate request body
+    const { title, body: messageBody, fcmTokens, data = {} } = body;
+    
+    if (!title || typeof title !== 'string') {
+      console.error(`[${new Date().toISOString()}] [API send-notification] Invalid title`);
+      return response.status(400).json({ error: "Title is required and must be a string" });
+    }
+    
+    if (!messageBody || typeof messageBody !== 'string') {
+      console.error(`[${new Date().toISOString()}] [API send-notification] Invalid body`);
+      return response.status(400).json({ error: "Body is required and must be a string" });
+    }
+    
+    if (!fcmTokens || !Array.isArray(fcmTokens) || fcmTokens.length === 0) {
+      console.error(`[${new Date().toISOString()}] [API send-notification] Invalid fcmTokens`);
+      return response.status(400).json({ error: "fcmTokens is required and must be a non-empty array of strings" });
+    }
+    
+    // Validate all tokens are strings
+    for (const token of fcmTokens) {
+      if (typeof token !== 'string') {
+        console.error(`[${new Date().toISOString()}] [API send-notification] Invalid token: ${token}`);
+        return response.status(400).json({ error: "All fcmTokens must be strings" });
+      }
     }
 
-    if (!tokensToUse || tokensToUse.length === 0) {
-      console.error(`[${new Date().toISOString()}] [API send-notification] No FCM tokens provided ❌`);
-      return response.status(400).json(
-        { error: 'No FCM tokens provided' }
-      );
+    console.log(`[${new Date().toISOString()}] [API send-notification] Valid request - Tokens: ${fcmTokens.length}`);
+
+    if (!firebaseAdminInitialized) {
+      console.error(`[${new Date().toISOString()}] [API send-notification] Firebase Admin not initialized`);
+      return response.status(500).json({ 
+        error: "Firebase Admin not initialized",
+        firebaseAdminInitialized,
+        serviceAccountLoaded
+      });
     }
 
-    console.log('[FCM SERVER] Requisição recebida');
-    console.log('[FCM SERVER] Tokens recebidos:', tokensToUse);
-    console.log('[FCM SERVER] Quantidade:', tokensToUse?.length || 0);
-    console.log('[FCM SERVER] Payload:', { title, body: messageBody, data });
-    console.log(`[${new Date().toISOString()}] [API send-notification] Tokens to send (${tokensToUse.length}):`, tokensToUse.map((t: string) => `${t.substring(0, 10)}...`));
-    console.log(`[${new Date().toISOString()}] [API send-notification] Preparing to send notifications...`);
-
-    const messages = tokensToUse.map((token: string) => ({
+    // Prepare FCM messages
+    const messages = fcmTokens.map((token: string) => ({
       token,
       notification: {
         title,
@@ -141,7 +118,7 @@ export default async function handler(request: VercelRequest, response: VercelRe
       },
       android: {
         priority: 'high' as const,
-        ttl: 3600 * 1000, // 1 hour
+        ttl: 3600 * 1000,
         notification: {
           channelId: 'gabi_manicure_channel_high_importance',
           sound: 'default',
@@ -153,7 +130,7 @@ export default async function handler(request: VercelRequest, response: VercelRe
           clickAction: 'FLUTTER_NOTIFICATION_CLICK',
         }
       },
-      apns: { // Just in case we ever have iOS
+      apns: {
         payload: {
           aps: {
             sound: 'default',
@@ -167,58 +144,20 @@ export default async function handler(request: VercelRequest, response: VercelRe
       }
     }));
 
-    console.log(`[${new Date().toISOString()}] [API send-notification] Messages prepared:`, JSON.stringify(messages.map(m => ({ ...m, token: m.token?.substring(0, 10) + '...' })), null, 2));
-
-    if (!firebaseAdminInitialized) {
-      console.error(`[${new Date().toISOString()}] [API send-notification] Firebase Admin not initialized, cannot send notifications ❌`);
-      return response.status(500).json({ 
-        error: 'Firebase Admin not initialized', 
-        firebaseAdminInitialized, 
-        serviceAccountLoaded 
-      });
-    }
-
-    console.log('[FCM SERVER] Enviando para Firebase...');
-    console.log(`[${new Date().toISOString()}] [API send-notification] Calling sendEach...`);
-    // Send each message individually using sendEach
+    console.log(`[${new Date().toISOString()}] [API send-notification] Sending ${messages.length} notifications...`);
     const fcmResponse = await admin.messaging().sendEach(messages);
     
-    console.log('[FCM SERVER] Resposta completa Firebase:', fcmResponse);
-    console.log('[FCM SERVER] Success count:', fcmResponse.successCount);
-    console.log('[FCM SERVER] Failure count:', fcmResponse.failureCount);
+    console.log(`[${new Date().toISOString()}] [API send-notification] Sent! Success: ${fcmResponse.successCount}, Failed: ${fcmResponse.failureCount}`);
 
-    console.log(`\n[${new Date().toISOString()}] [API send-notification] Send completed!`);
-    console.log(`[${new Date().toISOString()}] [API send-notification] Success count:`, fcmResponse.successCount, '✅');
-    console.log(`[${new Date().toISOString()}] [API send-notification] Failure count:`, fcmResponse.failureCount, '❌');
-    console.log(`[${new Date().toISOString()}] [API send-notification] Individual results:`, 
-      fcmResponse.responses.map((r, i) => ({
-        tokenPrefix: tokensToUse[i].substring(0, 10),
-        success: r.success,
-        messageId: r.messageId,
-        error: r.error ? {
-          code: r.error.code,
-          message: r.error.message
-        } : null
-      }))
-    );
-
-    // For each individual response
-    fcmResponse.responses.forEach((r, index) => {
-      console.log('[FCM SERVER] Token:', tokensToUse[index].substring(0, 20) + '...');
-      console.log('[FCM SERVER] Resultado:', r);
-
-      if (r.error) {
-        console.error('[FCM SERVER] Token inválido detectado:', tokensToUse[index].substring(0, 20) + '...');
-        console.error('[FCM SERVER] Erro Firebase:', r.error);
-      }
-    });
-
+    // Return standard success response as required
     return response.status(200).json({ 
       success: true, 
-      successCount: fcmResponse.successCount, 
+      sent: fcmResponse.successCount, 
+      message: "Notifications processed",
+      successCount: fcmResponse.successCount,
       failureCount: fcmResponse.failureCount,
       responses: fcmResponse.responses.map((r, i) => ({
-        tokenPrefix: tokensToUse[i].substring(0, 10),
+        tokenPrefix: fcmTokens[i].substring(0, 10),
         success: r.success,
         messageId: r.messageId,
         error: r.error ? {
@@ -228,18 +167,15 @@ export default async function handler(request: VercelRequest, response: VercelRe
       })),
       firebaseAdminInitialized,
       serviceAccountLoaded,
-      totalTokens: tokensToUse.length
+      totalTokens: fcmTokens.length
     });
   } catch (error) {
-    console.error(`[${new Date().toISOString()}] [API send-notification] Error sending notification:`, error);
-    return response.status(500).json(
-      { 
-        error: 'Internal server error',
-        details: String(error),
-        stack: error instanceof Error ? error.stack : undefined,
-        firebaseAdminInitialized,
-        serviceAccountLoaded
-      }
-    );
+    console.error(`[${new Date().toISOString()}] [API send-notification] Error:`, error);
+    return response.status(500).json({ 
+      error: "Internal server error",
+      details: String(error),
+      firebaseAdminInitialized,
+      serviceAccountLoaded
+    });
   }
 }
