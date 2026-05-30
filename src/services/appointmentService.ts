@@ -469,17 +469,11 @@ export async function createAppointment(input: Omit<Appointment, 'id' | 'created
   }
   try {
     const adminFcmTokens = await getAdminFcmTokens();
-    const clientFcmTokens = await getUserFcmTokens(input.userId);
     
     const dateStr = dayjs(startAt).format('DD/MM/YYYY');
     const timeStr = dayjs(startAt).format('HH:mm');
     
     const tokensToSend: string[] = [...adminFcmTokens];
-    clientFcmTokens.forEach(token => {
-      if (!tokensToSend.includes(token)) {
-        tokensToSend.push(token);
-      }
-    });
     
     console.log('[createAppointment] Tokens to send:', tokensToSend.map(t => `${t.substring(0,10)}...`));
     
@@ -583,17 +577,10 @@ export async function cancelAppointment(appointmentId: string): Promise<void> {
       }
 
       const adminFcmTokens = await getAdminFcmTokens();
-      const clientFcmTokens = await getUserFcmTokens(appointmentData.userId);
-      
       const dateStr = dayjs(appointmentData.startAt).format('DD/MM/YYYY');
       const timeStr = dayjs(appointmentData.startAt).format('HH:mm');
       
       const tokensToSend: string[] = [...adminFcmTokens];
-      clientFcmTokens.forEach(token => {
-        if (!tokensToSend.includes(token)) {
-          tokensToSend.push(token);
-        }
-      });
       
       console.log('[cancelAppointment] Tokens to send:', tokensToSend.map(t => `${t.substring(0,10)}...`));
       
@@ -647,6 +634,19 @@ export async function setAppointmentStatus(
   const now = Date.now();
   const shouldEnsurePayment = status === 'concluido';
 
+  // First get appointment data if not provided
+  let appointmentData: Appointment | null = options?.appointment || null;
+  if (isFirebaseConfigured() && !appointmentData) {
+    const db = getFirebaseDb();
+    if (db) {
+      const docRef = doc(db, 'appointments', appointmentId);
+      const docSnap = await getDoc(docRef);
+      if (docSnap.exists()) {
+        appointmentData = { id: appointmentId, ...(docSnap.data() as Omit<Appointment, 'id'>) };
+      }
+    }
+  }
+
   if (!isFirebaseConfigured()) {
     const all = safeGetArray<Appointment>(appointmentsKey);
     const idx = all.findIndex((a) => a.id === appointmentId);
@@ -664,29 +664,104 @@ export async function setAppointmentStatus(
         method: options.payment?.method,
       });
     }
-    return;
+  } else {
+    const db = getFirebaseDb();
+    if (!db) throw new Error('Firebase indisponível');
+    const patch: any = { status, updatedAt: now };
+    if (status === 'concluido') patch.completedAt = now;
+    await updateDoc(doc(db, 'appointments', appointmentId), patch);
+
+    if (shouldEnsurePayment) {
+      const actor = options?.actor;
+      if (!actor) return;
+
+      const base = options?.appointment || appointmentData;
+      if (!base) return;
+
+      const normalized: Appointment = { ...base, status, updatedAt: now, completedAt: now };
+      await ensurePaymentForFinalizedAppointment({
+        appointment: normalized,
+        adminUser: actor,
+        amountCents: options.payment?.amountCents,
+        method: options.payment?.method,
+      });
+    }
   }
 
-  const db = getFirebaseDb();
-  if (!db) throw new Error('Firebase indisponível');
-  const patch: any = { status, updatedAt: now };
-  if (status === 'concluido') patch.completedAt = now;
-  await updateDoc(doc(db, 'appointments', appointmentId), patch);
+  // Send FCM notification to client if status was accepted or rejected
+  if (appointmentData && (status === 'confirmado' || status === 'recusado')) {
+    console.log('[setAppointmentStatus] Preparing to send FCM notification to client');
+    try {
+      // Initialize lastSendFlow
+      if (typeof window !== 'undefined') {
+        const debugWindow = window as any;
+        if (!debugWindow.__DEBUG_PUSH__) {
+          debugWindow.__DEBUG_PUSH__ = { logs: [], lastSent: null, lastReceived: null, lastError: null, lastApiCall: null };
+        }
+        debugWindow.__DEBUG_PUSH__.lastSendFlow = {
+          functionCalled: false,
+          tokensFound: false,
+          tokens: null,
+          payload: null,
+          apiCalled: false,
+          httpStatus: null,
+          apiResponse: null,
+          timestamp: new Date().toISOString(),
+        };
+      }
 
-  if (shouldEnsurePayment) {
-    const actor = options?.actor;
-    if (!actor) return;
+      const clientFcmTokens = await getUserFcmTokens(appointmentData.userId);
+      const dateStr = dayjs(appointmentData.startAt).format('DD/MM/YYYY');
+      const timeStr = dayjs(appointmentData.startAt).format('HH:mm');
 
-    const base = options?.appointment;
-    if (!base) return;
+      let title = '';
+      let body = '';
+      let notificationType = '';
 
-    const normalized: Appointment = { ...base, status, updatedAt: now, completedAt: now };
-    await ensurePaymentForFinalizedAppointment({
-      appointment: normalized,
-      adminUser: actor,
-      amountCents: options.payment?.amountCents,
-      method: options.payment?.method,
-    });
+      if (status === 'confirmado') {
+        title = 'Agendamento Confirmado!';
+        body = `Seu agendamento para ${dateStr} às ${timeStr} foi confirmado!`;
+        notificationType = 'appointment_accepted';
+      } else if (status === 'recusado') {
+        title = 'Agendamento Recusado';
+        body = `Infelizmente seu agendamento para ${dateStr} às ${timeStr} não pode ser aceito. Por favor, tente reagendar!`;
+        notificationType = 'appointment_rejected';
+      }
+
+      console.log('[setAppointmentStatus] Tokens to send:', clientFcmTokens.map(t => `${t.substring(0,10)}...`));
+
+      // Update lastSendFlow with token info
+      if (typeof window !== 'undefined') {
+        const debugWindow = window as any;
+        debugWindow.__DEBUG_PUSH__.lastSendFlow.tokensFound = Array.isArray(clientFcmTokens) && clientFcmTokens.length > 0;
+        debugWindow.__DEBUG_PUSH__.lastSendFlow.tokens = clientFcmTokens;
+      }
+
+      if (clientFcmTokens.length > 0 && title && body) {
+        console.log('[setAppointmentStatus] Calling sendFcmNotification...');
+        await sendFcmNotification({
+          title,
+          body,
+          fcmTokens: clientFcmTokens,
+          data: {
+            type: notificationType,
+            appointmentId,
+            url: '/pages/index',
+          },
+        });
+        console.log('[setAppointmentStatus] sendFcmNotification completed');
+      } else {
+        console.warn('[setAppointmentStatus] No tokens or missing title/body!');
+      }
+    } catch (error) {
+      console.error('[setAppointmentStatus] Error sending FCM notifications:', error);
+      if (typeof window !== 'undefined') {
+        const debugWindow = window as any;
+        if (debugWindow.__DEBUG_PUSH__) {
+          debugWindow.__DEBUG_PUSH__.lastSendFlow.error = String(error);
+        }
+      }
+    }
   }
 }
 
@@ -909,17 +984,11 @@ export async function rescheduleAppointment(params: {
       }
       
       const adminFcmTokens = await getAdminFcmTokens();
-      const clientFcmTokens = await getUserFcmTokens(appointmentData.userId);
       
       const dateStr = dayjs(startAt).format('DD/MM/YYYY');
       const timeStr = dayjs(startAt).format('HH:mm');
       
       const tokensToSend: string[] = [...adminFcmTokens];
-      clientFcmTokens.forEach(token => {
-        if (!tokensToSend.includes(token)) {
-          tokensToSend.push(token);
-        }
-      });
       
       console.log('[rescheduleAppointment] Tokens to send:', tokensToSend.map(t => `${t.substring(0,10)}...`));
       
