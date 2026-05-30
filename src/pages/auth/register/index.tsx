@@ -111,7 +111,8 @@ function RegisterPage() {
             className={styles.input}
             value={password}
             onInput={(e) => setPassword(e.detail.value)}
-            type={showPassword ? 'text' : 'password'}
+            type="text"
+            password={!showPassword}
             placeholder="Crie sua senha"
           />
           <View className={styles.toggle} onClick={() => setShowPassword((v) => !v)}>
@@ -128,7 +129,8 @@ function RegisterPage() {
             className={styles.input}
             value={confirmPassword}
             onInput={(e) => setConfirmPassword(e.detail.value)}
-            type={showConfirm ? 'text' : 'password'}
+            type="text"
+            password={!showConfirm}
             placeholder="Repita sua senha"
           />
           <View className={styles.toggle} onClick={() => setShowConfirm((v) => !v)}>

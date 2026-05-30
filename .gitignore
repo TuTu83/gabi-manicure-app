@@ -5,6 +5,7 @@ build/
 .cache/
 .temp/
 .swc/
+lib/
 
 .pai/
 

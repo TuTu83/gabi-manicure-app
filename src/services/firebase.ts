@@ -13,6 +13,9 @@ export interface FirebaseClientConfig {
   projectId: string;
   appId: string;
   storageBucket?: string;
+  messagingSenderId?: string;
+  measurementId?: string;
+  vapidKey?: string;
 }
 
 export function removeUndefinedFields<T>(value: T): T {
@@ -32,6 +35,16 @@ export function removeUndefinedFields<T>(value: T): T {
   return value;
 }
 
+// Diagnostic export to see the full injected env
+export function getDiagnosticFirebaseConfig(): Record<string, string> {
+  const rawEnv = readInjectedEnv();
+  const diagnosticConfig: Record<string, string> = {};
+  for (const [key, value] of Object.entries(rawEnv)) {
+    diagnosticConfig[key] = maskValue(value);
+  }
+  return diagnosticConfig;
+}
+
 function isFirebaseDebugEnabled(): boolean {
   try {
     if (typeof __GM_FIREBASE_DEBUG__ !== 'undefined' && String(__GM_FIREBASE_DEBUG__ || '') === '1') return true;
@@ -48,8 +61,18 @@ function isFirebaseDebugEnabled(): boolean {
 
 function readInjectedEnv(): Record<string, string> {
   try {
-    if (typeof __GM_FIREBASE_ENV__ === 'undefined') return {};
-    return (__GM_FIREBASE_ENV__ as any) || {};
+    // Prefer compile-time injected env
+    try {
+      if (typeof __GM_FIREBASE_ENV__ !== 'undefined') return (__GM_FIREBASE_ENV__ as any) || {};
+    } catch {}
+
+    // Fallback: allow a runtime global to be set (e.g. window.__GM_FIREBASE_ENV__)
+    try {
+      const runtime = (globalThis as any).__GM_FIREBASE_ENV__;
+      if (runtime && typeof runtime === 'object') return runtime as Record<string, string>;
+    } catch {}
+
+    return {};
   } catch {
     return {};
   }
@@ -67,6 +90,9 @@ export const firebaseConfig: FirebaseClientConfig = {
   projectId: readEnvValue('projectId'),
   appId: readEnvValue('appId'),
   storageBucket: readEnvValue('storageBucket'),
+  messagingSenderId: readEnvValue('messagingSenderId'),
+  measurementId: readEnvValue('measurementId'),
+  vapidKey: readEnvValue('vapidKey'),
 };
 
 export function isFirebaseConfigured(): boolean {
@@ -125,13 +151,33 @@ export function getFirebaseApp(): FirebaseApp | null {
     if (!loggedInit) {
       loggedInit = true;
       logFirebaseEnvStatus();
-      if (isFirebaseDebugEnabled()) console.log('[FIREBASE] tentando inicializar app...');
+      // Log FULL firebaseConfig (masked) BEFORE initializeApp()
+      console.log('[FIREBASE] firebaseConfig completo (masked)', {
+        apiKey: maskValue(firebaseConfig.apiKey),
+        authDomain: firebaseConfig.authDomain,
+        projectId: firebaseConfig.projectId,
+        storageBucket: firebaseConfig.storageBucket,
+        messagingSenderId: maskValue(firebaseConfig.messagingSenderId || ''),
+        appId: maskValue(firebaseConfig.appId),
+        measurementId: maskValue(firebaseConfig.measurementId || ''),
+        vapidKey: maskValue(firebaseConfig.vapidKey || ''),
+      });
+      // Log raw __GM_FIREBASE_ENV__
+      console.log('[FIREBASE] __GM_FIREBASE_ENV__ (masked)', getDiagnosticFirebaseConfig());
     }
     if (app) return app;
     const apps = getApps();
     if (isFirebaseDebugEnabled()) console.log('[FIREBASE] getApps()', { count: apps.length });
+    console.log('[FIREBASE] calling initializeApp() with firebaseConfig:', {
+      ...firebaseConfig,
+      apiKey: maskValue(firebaseConfig.apiKey),
+      appId: maskValue(firebaseConfig.appId),
+      messagingSenderId: maskValue(firebaseConfig.messagingSenderId || ''),
+      measurementId: maskValue(firebaseConfig.measurementId || ''),
+      vapidKey: maskValue(firebaseConfig.vapidKey || ''),
+    });
     app = apps.length ? apps[0] : initializeApp(firebaseConfig);
-    if (isFirebaseDebugEnabled()) console.log('[FIREBASE] app inicializado com sucesso');
+    console.log('[FIREBASE] app inicializado com sucesso, name:', app.name);
     return app;
   } catch (error) {
     console.error('[FIREBASE INIT ERROR]', error);
@@ -187,25 +233,97 @@ export function getFirebaseStorage(): FirebaseStorage | null {
 
 export function getFirebaseMessaging(): Messaging | null {
   const firebaseApp = getFirebaseApp();
-  if (!firebaseApp) return null;
+  console.log('[Firebase] getFirebaseMessaging - Passo 1: firebaseApp:', {
+    exists: !!firebaseApp,
+    name: firebaseApp?.name,
+    options: (() => {
+      const opts = firebaseApp?.options;
+      if (!opts) return null;
+      const maskVal = (v: any) => {
+        const val = String(v || '');
+        if (!val) return '';
+        const suffix = val.length <= 4 ? val : val.slice(-4);
+        return `***${suffix} (len=${val.length})`;
+      };
+      return {
+        apiKey: maskVal(opts.apiKey),
+        authDomain: maskVal(opts.authDomain),
+        projectId: maskVal(opts.projectId),
+        storageBucket: maskVal(opts.storageBucket),
+        messagingSenderId: maskVal(opts.messagingSenderId),
+        appId: maskVal(opts.appId),
+        measurementId: maskVal(opts.measurementId),
+      };
+    })(),
+  });
+
+  console.log('[Firebase] getFirebaseMessaging - Passo 2: getApps():', getApps().map(app => ({ name: app.name, options: !!app.options })));
+
+  if (!firebaseApp) {
+    console.error('[Firebase] Messaging: firebaseApp não disponível');
+    if (typeof window !== 'undefined') {
+      (window as any).__DEBUG_PUSH__ = (window as any).__DEBUG_PUSH__ || {};
+      (window as any).__DEBUG_PUSH__.messagingError = {
+        name: 'AppMissingError',
+        code: 'firebase-app-missing',
+        message: 'Firebase App não está disponível',
+        stack: '',
+      };
+    }
+    return null;
+  }
   try {
-    if (messaging) return messaging;
-    messaging = getMessaging(firebaseApp);
+    if (messaging) {
+      console.log('[Firebase] Messaging: retornando instância existente');
+      return messaging;
+    }
+    console.log('[Firebase] Messaging: tentando criar nova instância...');
+    const instance = getMessaging(firebaseApp);
+    console.log('[Firebase] Messaging: instância criada com sucesso', { instance: !!instance });
+    messaging = instance;
+    if (typeof window !== 'undefined') {
+      (window as any).__DEBUG_PUSH__ = (window as any).__DEBUG_PUSH__ || {};
+      (window as any).__DEBUG_PUSH__.messagingError = null;
+      (window as any).__DEBUG_PUSH__.firebaseSdkStatus = {
+        firebaseApp: 'OK',
+        getAppsCount: getApps().length,
+        messagingInstanceCreated: true,
+      };
+    }
     return messaging;
-  } catch (error) {
-    console.error('[Firebase] falha ao inicializar Messaging', error);
+  } catch (error: any) {
+    console.error('[Firebase] falha ao inicializar Messaging:', {
+      errorName: error?.name || 'unknown',
+      errorCode: error?.code || 'no-code',
+      errorMessage: error?.message || 'sem mensagem',
+      errorStack: error?.stack || 'sem stack',
+      fullError: JSON.stringify(error, null, 2),
+    });
+    // Salvar erro para exibição no debug
+    if (typeof window !== 'undefined') {
+      (window as any).__DEBUG_PUSH__ = (window as any).__DEBUG_PUSH__ || {};
+      (window as any).__DEBUG_PUSH__.messagingError = {
+        name: error?.name || 'unknown',
+        code: error?.code || 'no-code',
+        message: error?.message || 'sem mensagem',
+        stack: error?.stack || 'sem stack',
+      };
+    }
     return null;
   }
 }
 
-export async function getFcmToken(): Promise<string | null> {
+export async function getFcmToken(
+  serviceWorkerRegistration?: ServiceWorkerRegistration,
+): Promise<string | null> {
   const messaging = getFirebaseMessaging();
   if (!messaging) return null;
   try {
     const vapidKey = readEnvValue('vapidKey');
-    const token = vapidKey 
-      ? await getToken(messaging, { vapidKey })
-      : await getToken(messaging);
+    const options: any = {};
+    if (vapidKey) options.vapidKey = vapidKey;
+    if (serviceWorkerRegistration) options.serviceWorkerRegistration = serviceWorkerRegistration;
+    const token = await getToken(messaging, options);
     console.log('[FIREBASE FCM] Token obtido', token ? 'sim' : 'não');
     return token;
   } catch (error) {

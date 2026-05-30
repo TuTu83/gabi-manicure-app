@@ -25,3 +25,22 @@ declare namespace NodeJS {
     TARO_APP_ID: string
   }
 }
+
+declare global {
+  interface Window {
+    __DEBUG_PUSH__?: {
+      logs: any[];
+      lastSent: any;
+      lastReceived: any;
+      lastError: any;
+      lastApiCall?: {
+        url: string;
+        payload: any;
+        timestamp: number;
+        status: number | 'pending' | 'error';
+        response?: any;
+        error?: string;
+      };
+    };
+  }
+}

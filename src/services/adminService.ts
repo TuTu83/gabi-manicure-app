@@ -248,11 +248,19 @@ export async function upsertService(id: string | null, input: Omit<ServiceItem, 
   const now = Date.now();
   const inputActive: any = (input as any).active;
   const activeBool = !(inputActive === false || inputActive === 'false' || inputActive === 0 || inputActive === '0');
+  
+  // Log before processing
+  console.log('[Admin] upsertService - id:', id, 'input:', input);
+  
   const payload: any = removeUndefinedFields({
     ...input,
     active: activeBool,
     updatedAt: now,
   });
+  
+  // Log payload
+  console.log('[Admin] upsertService - payload:', payload);
+  
   if (!id) payload.createdAt = now;
   await setDoc(ref, payload, { merge: true });
 }
@@ -301,7 +309,7 @@ export async function updateUserFcmToken(userId: string, fcmToken: string): Prom
       updatedAt: Date.now()
     });
     // Mantemos o campo fcmToken para retrocompatibilidade
-    await updateDoc(doc(db, 'users', userId), { fcmToken, updatedAt: Date.now() }, { merge: true });
+    await setDoc(doc(db, 'users', userId), { fcmToken, updatedAt: Date.now() }, { merge: true });
     console.log('[Admin] Token FCM salvo com sucesso para usuário:', userId);
   } catch (error) {
     console.error('[Admin] falha ao salvar token FCM', error);

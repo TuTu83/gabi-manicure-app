@@ -100,7 +100,8 @@ function LoginPage() {
             className={styles.input}
             value={password}
             onInput={(e) => setPassword(e.detail.value)}
-            type={showPassword ? 'text' : 'password'}
+            type="text"
+            password={!showPassword}
             placeholder="Digite sua senha"
             placeholderClass={styles.placeholder}
           />

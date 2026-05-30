@@ -4,7 +4,7 @@ import Taro from '@tarojs/taro';
 import { Capacitor } from '@capacitor/core';
 import { PushNotifications } from '@capacitor/push-notifications';
 import { initializePushNotifications, getCurrentFcmToken, checkPushPermissions } from '../../services/pushService';
-import { getFirebaseMessaging, getFcmToken, onFcmMessage } from '../../services/firebase';
+import { getFirebaseMessaging, getFcmToken, onFcmMessage, firebaseConfig as exportedFirebaseConfig, getDiagnosticFirebaseConfig } from '../../services/firebase';
 
 type LogType = 'ERROR' | 'WARN' | 'INFO' | 'SUCCESS';
 
@@ -29,6 +29,12 @@ interface PushDiagnostics {
   fcmToken: string | null;
   lastTokenUpdate: number | null;
   messagingAvailable: boolean;
+  messagingObjectCreated: boolean;
+  serviceWorkerRegistered: boolean;
+  serviceWorkerScope: string | null;
+  serviceWorkerError: string | null;
+  messagingError: any;
+  serviceWorkerAPIAvailable: boolean;
 }
 
 const DashboardPage: React.FC = () => {
@@ -59,26 +65,62 @@ const DashboardPage: React.FC = () => {
     fcmToken: null,
     lastTokenUpdate: null,
     messagingAvailable: false,
+    messagingObjectCreated: false,
+    serviceWorkerRegistered: false,
+    serviceWorkerScope: null,
+    serviceWorkerError: null,
+    messagingError: null,
+    serviceWorkerAPIAvailable: false,
   });
   const [browserDiagnostics, setBrowserDiagnostics] = useState<any>({});
   const [filterType, setFilterType] = useState<LogType | 'ALL'>('ALL');
   const [isLoading, setIsLoading] = useState(true);
+  const [diagnosticFirebaseConfig, setDiagnosticFirebaseConfig] = useState<any>(null);
+  const [exportedFirebaseConfigMasked, setExportedFirebaseConfigMasked] = useState<any>(null);
 
   const refreshDebugData = async () => {
     const isBrowser = typeof window !== 'undefined' && typeof navigator !== 'undefined';
     const isNative = Capacitor.isNativePlatform();
     
-    let debugStore = {
+    let debugStore: {
+      logs: LogItem[];
+      lastSent: any;
+      lastReceived: any;
+      lastError: any;
+      lastApiCall: any;
+      fcmToken?: string | null;
+      lastTokenUpdate?: number | null;
+    } = {
       logs: [],
       lastSent: null,
       lastReceived: null,
       lastError: null,
       lastApiCall: null,
+      fcmToken: null,
+      lastTokenUpdate: null,
     };
     if (isBrowser) {
       debugStore = (window as any).__DEBUG_PUSH__ || debugStore;
     }
     setDebugData(debugStore);
+
+    // Get Firebase config diagnostic data
+    setDiagnosticFirebaseConfig(getDiagnosticFirebaseConfig());
+    
+    // Mask the exported firebaseConfig
+    const maskVal = (v: string) => {
+      const val = String(v || '');
+      if (!val) return '';
+      const suffix = val.length <=4 ? val : val.slice(-4);
+      return `***${suffix} (len=${val.length})`;
+    };
+    setExportedFirebaseConfigMasked({
+      apiKey: maskVal(exportedFirebaseConfig.apiKey),
+      authDomain: maskVal(exportedFirebaseConfig.authDomain),
+      projectId: maskVal(exportedFirebaseConfig.projectId),
+      appId: maskVal(exportedFirebaseConfig.appId),
+      storageBucket: maskVal((exportedFirebaseConfig as any).storageBucket || ''),
+    });
 
     setCapacitorDiagnostics({
       isNative: isNative,
@@ -108,10 +150,27 @@ const DashboardPage: React.FC = () => {
     
     setPushDiagnostics(prev => ({ 
       ...prev, 
-      fcmToken: currentToken || debugStore.fcmToken,
-      lastTokenUpdate: debugStore.lastTokenUpdate,
+      fcmToken: currentToken || debugStore.fcmToken || null,
+      lastTokenUpdate: debugStore.lastTokenUpdate ?? null,
       checkPermissionsResult: checkResult,
       messagingAvailable: !!messaging,
+      messagingObjectCreated: debugStore.messagingObjectCreated ?? false,
+      serviceWorkerRegistered: debugStore.serviceWorkerRegistered ?? false,
+      serviceWorkerScope: debugStore.serviceWorkerScope ?? null,
+      serviceWorkerError: debugStore.serviceWorkerError ?? null,
+      messagingError: debugStore.messagingError ?? null,
+      serviceWorkerAPIAvailable: debugStore.serviceWorkerAPIAvailable ?? false,
+      notificationAPIAvailable: debugStore.notificationAPIAvailable ?? false,
+      notificationPermission: debugStore.notificationPermission ?? null,
+      messagingIsSupported: debugStore.messagingIsSupported ?? false,
+      existingSWRegistrations: debugStore.existingSWRegistrations ?? null,
+      serviceWorkerActive: debugStore.serviceWorkerActive ?? false,
+      serviceWorkerWaiting: debugStore.serviceWorkerWaiting ?? false,
+      serviceWorkerInstalling: debugStore.serviceWorkerInstalling ?? false,
+      getFcmTokenSuccess: debugStore.getFcmTokenSuccess ?? null,
+      getFcmTokenError: debugStore.getFcmTokenError ?? null,
+      firebaseDiagnostic: debugStore.firebaseDiagnostic ?? null,
+      firebaseSdkStatus: debugStore.firebaseSdkStatus ?? null,
       registrationStatus: currentToken || debugStore.fcmToken ? 'registered' : 'not_registered'
     }));
 
@@ -313,6 +372,257 @@ const DashboardPage: React.FC = () => {
     }
   };
 
+  const collectAllDiagnostics = () => {
+    const now = new Date();
+    return {
+      timestamp: now.toISOString(),
+      timestampFormatted: now.toLocaleString('pt-BR'),
+      navigator: typeof navigator !== 'undefined' ? {
+        userAgent: navigator.userAgent,
+        platform: navigator.platform,
+        language: navigator.language,
+      } : null,
+      location: typeof window !== 'undefined' ? {
+        href: window.location.href,
+        hostname: window.location.hostname,
+      } : null,
+      environmentLabel: getEnvironmentLabel(),
+      debugPush: typeof window !== 'undefined' ? (window as any).__DEBUG_PUSH__ : null,
+      capacitorDiagnostics,
+      pushDiagnostics,
+      browserDiagnostics,
+      diagnosticFirebaseConfig,
+      exportedFirebaseConfigMasked,
+    };
+  };
+
+  const copyToClipboard = async (text: string) => {
+    try {
+      const isBrowser = typeof navigator !== 'undefined' && 'clipboard' in navigator;
+      if (isBrowser) {
+        await navigator.clipboard.writeText(text);
+        Taro.showToast({ title: 'Copiado com sucesso!', icon: 'success' });
+      } else {
+        // Fallback para navegadores antigos ou ambientes não-browser
+        const textArea = document.createElement('textarea');
+        textArea.value = text;
+        textArea.style.position = 'fixed';
+        textArea.style.top = '0';
+        textArea.style.left = '0';
+        document.body.appendChild(textArea);
+        textArea.focus();
+        textArea.select();
+        try {
+          document.execCommand('copy');
+          Taro.showToast({ title: 'Copiado com sucesso!', icon: 'success' });
+        } catch (err) {
+          Taro.showToast({ title: 'Falha ao copiar', icon: 'none' });
+        }
+        document.body.removeChild(textArea);
+      }
+    } catch (err) {
+      console.error('Erro ao copiar para área de transferência:', err);
+      Taro.showToast({ title: 'Falha ao copiar', icon: 'none' });
+    }
+  };
+
+  const downloadFile = (content: string, filename: string, mimeType: string) => {
+    try {
+      const isBrowser = typeof document !== 'undefined';
+      if (isBrowser) {
+        const blob = new Blob([content], { type: mimeType });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = filename;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+        Taro.showToast({ title: 'Arquivo baixado!', icon: 'success' });
+      } else {
+        Taro.showToast({ title: 'Não é possível baixar arquivos aqui', icon: 'none' });
+      }
+    } catch (err) {
+      console.error('Erro ao baixar arquivo:', err);
+      Taro.showToast({ title: 'Falha ao baixar', icon: 'none' });
+    }
+  };
+
+  const generateTextReport = () => {
+    const data = collectAllDiagnostics();
+    let report = `
+================================================================================
+                    RELATÓRIO DE DIAGNÓSTICO - GABI MANICURE
+================================================================================
+Data e Hora: ${data.timestampFormatted}
+Timestamp ISO: ${data.timestamp}
+Ambiente: ${data.environmentLabel}
+User Agent: ${data.navigator?.userAgent || 'N/A'}
+URL: ${data.location?.href || 'N/A'}
+================================================================================
+
+[CAPACITOR DIAGNÓSTICO]
+Capacitor.isNativePlatform(): ${data.capacitorDiagnostics.isNative}
+Capacitor.getPlatform(): ${data.capacitorDiagnostics.platform}
+
+[DIAGNÓSTICO NAVEGADOR]
+Standalone: ${data.browserDiagnostics.isStandalone}
+Notification API: ${data.browserDiagnostics.notification}
+Service Worker API: ${data.browserDiagnostics.serviceWorker}
+Permissão Notificações: ${data.pushDiagnostics.notificationPermission}
+
+[FIREBASE SDK STATUS]
+Messaging Criado: ${data.pushDiagnostics.messagingObjectCreated}
+Messaging Disponível: ${data.pushDiagnostics.messagingAvailable}
+Messaging Suportado: ${data.pushDiagnostics.messagingIsSupported}
+
+[SERVICE WORKER]
+SW API Disponível: ${data.pushDiagnostics.serviceWorkerAPIAvailable}
+SW Registrado: ${data.pushDiagnostics.serviceWorkerRegistered}
+SW Scope: ${data.pushDiagnostics.serviceWorkerScope}
+SW Active: ${data.pushDiagnostics.serviceWorkerActive}
+SW Waiting: ${data.pushDiagnostics.serviceWorkerWaiting}
+SW Installing: ${data.pushDiagnostics.serviceWorkerInstalling}
+
+[FCM TOKEN]
+Token: ${data.pushDiagnostics.fcmToken ? data.pushDiagnostics.fcmToken.substring(0, 50) + '...' : 'NÃO REGISTRADO'}
+Status Registro: ${data.pushDiagnostics.registrationStatus}
+
+[ÚLTIMO FLUXO DE ENVIO]
+${data.debugPush?.lastSendFlow ? `
+Função chamada?: ${data.debugPush.lastSendFlow.functionCalled}
+Tokens encontrados?: ${data.debugPush.lastSendFlow.tokensFound}
+Tokens: ${data.debugPush.lastSendFlow.tokens ? data.debugPush.lastSendFlow.tokens.join(', ') : 'Nenhum'}
+API chamada?: ${data.debugPush.lastSendFlow.apiCalled}
+Status HTTP: ${data.debugPush.lastSendFlow.httpStatus || 'N/A'}
+Timestamp: ${new Date(data.debugPush.lastSendFlow.timestamp).toLocaleString('pt-BR')}
+${data.debugPush.lastSendFlow.payload ? `Payload: ${typeof data.debugPush.lastSendFlow.payload === 'object' ? JSON.stringify(data.debugPush.lastSendFlow.payload, null, 2) : data.debugPush.lastSendFlow.payload}` : ''}
+${data.debugPush.lastSendFlow.apiResponse ? `Resposta API: ${typeof data.debugPush.lastSendFlow.apiResponse === 'object' ? JSON.stringify(data.debugPush.lastSendFlow.apiResponse, null, 2) : data.debugPush.lastSendFlow.apiResponse}` : ''}
+${data.debugPush.lastSendFlow.error ? `Erro: ${data.debugPush.lastSendFlow.error}` : ''}
+` : '\nNenhum fluxo de envio registrado.\n'}
+
+================================================================================
+                             LOGS COMPLETOS (ORDENADOS)
+================================================================================
+`;
+    if (data.debugPush?.logs && data.debugPush.logs.length > 0) {
+      const sortedLogs = [...data.debugPush.logs].sort((a, b) => (a.timestamp || 0) - (b.timestamp || 0));
+      sortedLogs.forEach(log => {
+        const logTime = log.timestamp ? new Date(log.timestamp).toLocaleString('pt-BR') : 'N/A';
+        report += `
+[${log.type.toUpperCase()}] [${logTime}]
+${log.message}
+${log.data ? `Dados: ${typeof log.data === 'object' ? JSON.stringify(log.data, null, 2) : log.data}` : ''}
+--------------------------------------------------------------------------------
+`;
+      });
+    } else {
+      report += '\nNenhum log disponível.\n';
+    }
+
+    report += `
+================================================================================
+                             ERROS ENCONTRADOS
+================================================================================
+`;
+    if (data.pushDiagnostics.messagingError) {
+      report += `
+[FIREBASE MESSAGING ERROR]
+Código: ${data.pushDiagnostics.messagingError.code}
+Mensagem: ${data.pushDiagnostics.messagingError.message}
+Stack Trace: ${data.pushDiagnostics.messagingError.stack}
+`;
+    }
+    if (data.pushDiagnostics.serviceWorkerError) {
+      report += `
+[SERVICE WORKER ERROR]
+${data.pushDiagnostics.serviceWorkerError}
+`;
+    }
+    if (data.pushDiagnostics.getFcmTokenError) {
+      report += `
+[GET FCM TOKEN ERROR]
+${data.pushDiagnostics.getFcmTokenError}
+`;
+    }
+    report += `
+================================================================================
+                       FIM DO RELATÓRIO DE DIAGNÓSTICO
+================================================================================
+`;
+    return report;
+  };
+
+  const copyEverything = async () => {
+    const report = generateTextReport();
+    await copyToClipboard(report);
+  };
+
+  const exportLogsAsTxt = () => {
+    const report = generateTextReport();
+    const now = new Date();
+    const year = String(now.getFullYear()).padStart(4, '0');
+    const month = String(now.getMonth() + 1).padStart(2, '0');
+    const day = String(now.getDate()).padStart(2, '0');
+    const hour = String(now.getHours()).padStart(2, '0');
+    const minute = String(now.getMinutes()).padStart(2, '0');
+    const second = String(now.getSeconds()).padStart(2, '0');
+    const filename = `debug-push-${year}-${month}-${day}-${hour}-${minute}-${second}.txt`;
+    downloadFile(report, filename, 'text/plain');
+  };
+
+  const exportAsJson = () => {
+    const data = collectAllDiagnostics();
+    const jsonStr = JSON.stringify(data, null, 2);
+    const now = new Date();
+    const year = String(now.getFullYear()).padStart(4, '0');
+    const month = String(now.getMonth() + 1).padStart(2, '0');
+    const day = String(now.getDate()).padStart(2, '0');
+    const hour = String(now.getHours()).padStart(2, '0');
+    const minute = String(now.getMinutes()).padStart(2, '0');
+    const second = String(now.getSeconds()).padStart(2, '0');
+    const filename = `debug-push-${year}-${month}-${day}-${hour}-${minute}-${second}.json`;
+    downloadFile(jsonStr, filename, 'application/json');
+  };
+
+  const copyErrors = async () => {
+    const data = collectAllDiagnostics();
+    let errorText = '';
+    if (data.pushDiagnostics.messagingError) {
+      errorText += `[FIREBASE MESSAGING ERROR]\nCódigo: ${data.pushDiagnostics.messagingError.code}\nMensagem: ${data.pushDiagnostics.messagingError.message}\nStack: ${data.pushDiagnostics.messagingError.stack}\n\n`;
+    }
+    if (data.pushDiagnostics.serviceWorkerError) {
+      errorText += `[SERVICE WORKER ERROR]\n${data.pushDiagnostics.serviceWorkerError}\n\n`;
+    }
+    if (data.pushDiagnostics.getFcmTokenError) {
+      errorText += `[GET FCM TOKEN ERROR]\n${data.pushDiagnostics.getFcmTokenError}\n\n`;
+    }
+    if (data.debugPush?.logs?.length > 0) {
+      const errorLogs = data.debugPush.logs.filter(log => 
+        log.type.toUpperCase().includes('ERROR') || 
+        log.type.toUpperCase().includes('ERRO')
+      );
+      if (errorLogs.length > 0) {
+        errorText += `\n[LOGS DE ERRO]\n`;
+        errorLogs.forEach(log => {
+          const logTime = log.timestamp ? new Date(log.timestamp).toLocaleString('pt-BR') : 'N/A';
+          errorText += `[${logTime}] ${log.message}${log.data ? `\nDados: ${JSON.stringify(log.data)}` : ''}\n---\n`;
+        });
+      }
+    }
+    if (errorText.trim() === '') {
+      await copyToClipboard('Nenhum erro encontrado.');
+    } else {
+      await copyToClipboard(errorText);
+    }
+  };
+
+  const copyFullDiagnosticReport = async () => {
+    const report = generateTextReport();
+    await copyToClipboard(report);
+  };
+
   if (isLoading) {
     return (
       <View style={{ flex: 1, padding: '20px', justifyContent: 'center', alignItems: 'center' }}>
@@ -342,6 +652,216 @@ const DashboardPage: React.FC = () => {
           </Text>
         </View>
       </View>
+
+      <Card title="Ações Rápidas" icon="⚙️">
+        <View style={{ gap: '8px' }}>
+          <View style={{ flexDirection: 'row', gap: '8px', flexWrap: 'wrap' }}>
+            <ActionButton onClick={copyEverything}>📋 COPIAR TUDO</ActionButton>
+            <ActionButton onClick={copyFullDiagnosticReport}>📝 COPIAR DIAGNÓSTICO COMPLETO</ActionButton>
+          </View>
+          <View style={{ flexDirection: 'row', gap: '8px', flexWrap: 'wrap' }}>
+            <ActionButton onClick={copyErrors}>⚠️ COPIAR ERROS</ActionButton>
+            <ActionButton onClick={exportLogsAsTxt}>📄 EXPORTAR TXT</ActionButton>
+            <ActionButton onClick={exportAsJson}>📦 EXPORTAR JSON</ActionButton>
+            <ActionButton onClick={clearLogs}>🗑️ LIMPAR LOGS</ActionButton>
+          </View>
+        </View>
+      </Card>
+
+      <Card title="Último Fluxo de Envio" icon="🔄">
+        <View style={{ gap: '12px' }}>
+          {debugData.lastSendFlow ? (
+            <View style={{ gap: '8px' }}>
+              <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: '12px' }}>
+                <Badge label="Função chamada?" status={debugData.lastSendFlow.functionCalled} />
+                <Badge label="Tokens encontrados?" status={debugData.lastSendFlow.tokensFound} />
+                <Badge label="API chamada?" status={debugData.lastSendFlow.apiCalled} />
+                {debugData.lastSendFlow.httpStatus && (
+                  <Badge 
+                    label="Status HTTP" 
+                    status={debugData.lastSendFlow.httpStatus} 
+                    color={String(debugData.lastSendFlow.httpStatus).startsWith('2') ? '#10b981' : '#ef4444'}
+                  />
+                )}
+              </View>
+
+              {debugData.lastSendFlow.tokens && debugData.lastSendFlow.tokens.length > 0 && (
+                <View style={{ gap: '8px' }}>
+                  <Text style={{ fontSize: '14px', fontWeight: 'bold', color: '#111827' }}>
+                    📱 Tokens:
+                  </Text>
+                  <View style={{ flexDirection: 'column', gap: '4px' }}>
+                    {debugData.lastSendFlow.tokens.map((token: string, index: number) => (
+                      <Text
+                        key={index}
+                        style={{
+                          fontSize: '11px',
+                          color: '#374151',
+                          fontFamily: 'monospace',
+                          wordBreak: 'break-all',
+                          backgroundColor: '#f3f4f6',
+                          padding: '8px',
+                          borderRadius: '8px',
+                        }}
+                        selectable
+                      >
+                        {token}
+                      </Text>
+                    ))}
+                  </View>
+                </View>
+              )}
+
+              {debugData.lastSendFlow.payload && (
+                <JsonPreview data={debugData.lastSendFlow.payload} label="📦 Payload enviado" />
+              )}
+
+              {debugData.lastSendFlow.apiResponse && (
+                <JsonPreview data={debugData.lastSendFlow.apiResponse} label="📨 Resposta da API" />
+              )}
+
+              {debugData.lastSendFlow.error && (
+                <View style={{ gap: '8px', padding: '12px', backgroundColor: '#fef2f2', borderRadius: '8px', border: '1px solid #fecaca' }}>
+                  <Text style={{ fontSize: '14px', fontWeight: 'bold', color: '#dc2626' }}>
+                    ❌ Erro no fluxo:
+                  </Text>
+                  <Text style={{ fontSize: '12px', color: '#b91c1c' }} selectable>
+                    {debugData.lastSendFlow.error}
+                  </Text>
+                </View>
+              )}
+
+              <Text style={{ fontSize: '11px', color: '#9ca3af' }}>
+                🕒 {new Date(debugData.lastSendFlow.timestamp).toLocaleString('pt-BR')}
+              </Text>
+            </View>
+          ) : (
+            <Text style={{ fontSize: '14px', color: '#6b7280' }}>
+              ⏳ Aguardando primeiro fluxo de envio...
+            </Text>
+          )}
+        </View>
+      </Card>
+
+      <Card title="Diagnóstico de Envio" icon="📤">
+        <View style={{ gap: '12px' }}>
+          {/* Tokens encontrados */}
+          {debugData.lastApiCall?.payload?.fcmTokens && debugData.lastApiCall.payload.fcmTokens.length > 0 ? (
+            <View style={{ gap: '8px' }}>
+              <Text style={{ fontSize: '14px', fontWeight: 'bold', color: '#111827' }}>
+                📱 Tokens encontrados para usuário:
+              </Text>
+              <View style={{ flexDirection: 'column', gap: '4px' }}>
+                {debugData.lastApiCall.payload.fcmTokens.map((token: string, index: number) => (
+                  <Text
+                    key={index}
+                    style={{
+                      fontSize: '11px',
+                      color: '#374151',
+                      fontFamily: 'monospace',
+                      wordBreak: 'break-all',
+                      backgroundColor: '#f3f4f6',
+                      padding: '8px',
+                      borderRadius: '8px'
+                    }}
+                    selectable
+                  >
+                    {token}
+                  </Text>
+                ))}
+              </View>
+            </View>
+          ) : (
+            <Text style={{ fontSize: '14px', color: '#6b7280' }}>
+              ⚠️ Nenhum token encontrado na última chamada
+            </Text>
+          )}
+
+          {/* Último payload */}
+          {debugData.lastApiCall?.payload && (
+            <JsonPreview data={debugData.lastApiCall.payload} label="📦 Último payload enviado" />
+          )}
+
+          {/* Última resposta da API */}
+          {debugData.lastApiCall?.response && (
+            <View style={{ gap: '8px' }}>
+              <Text style={{ fontSize: '14px', fontWeight: 'bold', color: '#111827' }}>
+                📨 Última chamada para /api/send-notification
+              </Text>
+
+              <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: '12px' }}>
+                <Badge
+                  label="SuccessCount"
+                  status={debugData.lastApiCall.response.successCount}
+                  color={debugData.lastApiCall.response.successCount > 0 ? '#10b981' : '#6b7280'}
+                />
+                <Badge
+                  label="FailureCount"
+                  status={debugData.lastApiCall.response.failureCount}
+                  color={debugData.lastApiCall.response.failureCount > 0 ? '#ef4444' : '#6b7280'}
+                />
+              </View>
+
+              {debugData.lastApiCall.response.responses && (
+                <View style={{ gap: '8px' }}>
+                  <Text style={{ fontSize: '13px', fontWeight: 'bold', color: '#111827' }}>
+                    Resultado por token:
+                  </Text>
+                  {debugData.lastApiCall.response.responses.map((r: any, index: number) => (
+                    <View
+                      key={index}
+                      style={{
+                        padding: '8px 12px',
+                        borderRadius: '8px',
+                        backgroundColor: r.success ? '#ecfdf5' : '#fef2f2',
+                        borderLeftWidth: '4px',
+                        borderLeftColor: r.success ? '#10b981' : '#ef4444',
+                        borderLeftStyle: 'solid'
+                      }}
+                    >
+                      <Text
+                        style={{ fontSize: '11px', color: '#1f2937', fontFamily: 'monospace' }}
+                        selectable
+                      >
+                        {r.tokenPrefix}
+                      </Text>
+                      <Text
+                        style={{ fontSize: '12px', color: r.success ? '#059669' : '#dc2626' }}
+                      >
+                        {r.success ? '✅ Aceito' : '❌ Rejeitado'}
+                        {!r.success && r.error ? ` - ${r.error.code}: ${r.error.message}` : ''}
+                      </Text>
+                      {r.success && r.messageId && (
+                        <Text style={{ fontSize: '10px', color: '#6b7280', fontFamily: 'monospace' }} selectable>
+                          Message ID: {r.messageId}
+                        </Text>
+                      )}
+                    </View>
+                  ))}
+                </View>
+              )}
+            </View>
+          )}
+
+          {/* Último erro */}
+          {debugData.lastApiCall?.error && (
+            <View style={{ gap: '8px', padding: '12px', backgroundColor: '#fef2f2', borderRadius: '8px', border: '1px solid #fecaca' }}>
+              <Text style={{ fontSize: '14px', fontWeight: 'bold', color: '#dc2626' }}>
+                ❌ Último erro retornado pelo Firebase
+              </Text>
+              <Text style={{ fontSize: '12px', color: '#b91c1c' }} selectable>
+                {debugData.lastApiCall.error}
+              </Text>
+            </View>
+          )}
+
+          {!debugData.lastApiCall && (
+            <Text style={{ fontSize: '14px', color: '#6b7280' }}>
+              ⏳ Aguardando primeira chamada de envio...
+            </Text>
+          )}
+        </View>
+      </Card>
 
       <Card title="Diagnóstico Capacitor" icon="⚡">
         <View style={{ gap: '12px' }}>
@@ -418,6 +938,123 @@ const DashboardPage: React.FC = () => {
         </View>
       </Card>
 
+      <Card title="Configuração Firebase (Raw Env)" icon="🔧">
+        <View style={{ gap: '8px' }}>
+          {diagnosticFirebaseConfig ? (
+            Object.entries(diagnosticFirebaseConfig).map(([key, value]) => (
+              <View key={key} style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+                <Text style={{ fontSize: '13px', color: '#6b7280' }}>{key}</Text>
+                <Text style={{ fontSize: '12px', color: '#374151', fontFamily: 'monospace', textAlign: 'right' }} selectable>
+                  {value != null ? String(value) : '<VAZIO>'}
+                </Text>
+              </View>
+            ))
+          ) : (
+            <Text style={{ fontSize: '13px', color: '#ef4444', textAlign: 'center' }}>Carregando...</Text>
+          )}
+        </View>
+      </Card>
+
+      <Card title="Configuração Firebase (Exportada)" icon="🎯">
+        <View style={{ gap: '8px' }}>
+          {exportedFirebaseConfigMasked ? (
+            Object.entries(exportedFirebaseConfigMasked).map(([key, value]) => (
+              <View key={key} style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+                <Text style={{ fontSize: '13px', color: '#6b7280' }}>{key}</Text>
+                <Text style={{ fontSize: '12px', color: '#374151', fontFamily: 'monospace', textAlign: 'right' }} selectable>
+                  {value != null ? String(value) : '<VAZIO>'}
+                </Text>
+              </View>
+            ))
+          ) : (
+            <Text style={{ fontSize: '13px', color: '#ef4444', textAlign: 'center' }}>Carregando...</Text>
+          )}
+        </View>
+      </Card>
+
+      <Card title="Status Firebase SDK & Service Worker" icon="🔥">
+        <View style={{ gap: '12px' }}>
+          <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: '8px' }}>
+            <Badge label="Messaging Support" status={pushDiagnostics.messagingIsSupported} />
+            <Badge label="SW API" status={pushDiagnostics.serviceWorkerAPIAvailable} />
+            <Badge label="Notification API" status={pushDiagnostics.notificationAPIAvailable} />
+            <Badge label="Messaging Criado" status={pushDiagnostics.messagingObjectCreated} />
+          </View>
+
+          <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+            <Text style={{ fontSize: '13px', color: '#6b7280' }}>Permissão Notificações</Text>
+            <Text style={{ fontSize: '13px', fontWeight: 'bold', color: '#374151' }}>
+              {pushDiagnostics.notificationPermission?.toUpperCase() || 'NÃO VERIFICADO'}
+            </Text>
+          </View>
+
+          <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+            <Text style={{ fontSize: '13px', color: '#6b7280' }}>SW Registrado</Text>
+            <Text style={{ 
+              fontSize: '13px', fontWeight: 'bold', color: pushDiagnostics.serviceWorkerRegistered ? '#10b981' : '#ef4444' }}>
+              {pushDiagnostics.serviceWorkerRegistered ? 'SIM' : 'NÃO'}
+            </Text>
+          </View>
+
+          {pushDiagnostics.serviceWorkerScope && (
+            <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+              <Text style={{ fontSize: '13px', color: '#6b7280' }}>SW Scope</Text>
+              <Text style={{ fontSize: '12px', color: '#374151', fontFamily: 'monospace', wordBreak: 'break-all' }} selectable>
+                {pushDiagnostics.serviceWorkerScope}
+              </Text>
+            </View>
+          )}
+
+          <View style={{ flexDirection: 'row', justifyContent: 'flexStart', gap: '8px' }}>
+            <Badge label="SW Active" status={pushDiagnostics.serviceWorkerActive} />
+            <Badge label="SW Waiting" status={pushDiagnostics.serviceWorkerWaiting} />
+            <Badge label="SW Installing" status={pushDiagnostics.serviceWorkerInstalling} />
+          </View>
+
+          {pushDiagnostics.existingSWRegistrations?.length > 0 && (
+            <JsonPreview data={pushDiagnostics.existingSWRegistrations} label="Service Workers Existentes" />
+          )}
+
+          {pushDiagnostics.getFcmTokenSuccess !== null && (
+            <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+              <Text style={{ fontSize: '13px', color: '#6b7280' }}>getFcmToken() Sucesso</Text>
+              <Text style={{ 
+                fontSize: '13px', fontWeight: 'bold', color: pushDiagnostics.getFcmTokenSuccess ? '#10b981' : '#ef4444' }}>
+                {pushDiagnostics.getFcmTokenSuccess ? 'SIM' : 'NÃO'}
+              </Text>
+            </View>
+          )}
+
+          {pushDiagnostics.getFcmTokenError && (
+            <JsonPreview data={pushDiagnostics.getFcmTokenError} label="Erro getFcmToken()" />
+          )}
+
+          {pushDiagnostics.messagingError && (
+            <View style={{ gap: '8px', padding: '12px', backgroundColor: '#fef2f2', borderRadius: '8px', border: '1px solid #fecaca' }}>
+              <Text style={{ fontSize: '13px', fontWeight: '700', color: '#dc2626' }}>Erro Firebase Messaging</Text>
+              <Text style={{ fontSize: '12px', color: '#991b1b' }} selectable>
+                <Text style={{ fontWeight: 'bold' }}>Código:</Text> {pushDiagnostics.messagingError.code || 'N/A'}
+              </Text>
+              <Text style={{ fontSize: '12px', color: '#991b1b' }} selectable>
+                <Text style={{ fontWeight: 'bold' }}>Mensagem:</Text> {pushDiagnostics.messagingError.message || 'N/A'}
+              </Text>
+              {pushDiagnostics.messagingError.stack && (
+                <JsonPreview data={pushDiagnostics.messagingError.stack} label="Stack Trace" />
+              )}
+            </View>
+          )}
+
+          {pushDiagnostics.serviceWorkerError && (
+            <JsonPreview data={pushDiagnostics.serviceWorkerError} label="Erro Service Worker" />
+          )}
+
+          {pushDiagnostics.firebaseSdkStatus && (
+            <JsonPreview data={pushDiagnostics.firebaseSdkStatus} label="Status Firebase SDK" />
+          )}
+
+        </View>
+      </Card>
+
       <Card title="Diagnóstico Push Notifications" icon="🔔">
         <View style={{ gap: '12px' }}>
           <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
@@ -455,6 +1092,48 @@ const DashboardPage: React.FC = () => {
           )}
           
           <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+            <Text style={{ fontSize: '13px', color: '#6b7280' }}>Service Worker API</Text>
+            <Text style={{ 
+              fontSize: '13px', 
+              fontWeight: 'bold',
+              color: pushDiagnostics.serviceWorkerAPIAvailable ? '#10b981' : '#ef4444'
+            }}>
+              {pushDiagnostics.serviceWorkerAPIAvailable ? 'DISPONÍVEL' : 'NÃO DISPONÍVEL'}
+            </Text>
+          </View>
+
+          <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+            <Text style={{ fontSize: '13px', color: '#6b7280' }}>Service Worker Registrado</Text>
+            <Text style={{ 
+              fontSize: '13px', 
+              fontWeight: 'bold',
+              color: pushDiagnostics.serviceWorkerRegistered ? '#10b981' : '#ef4444'
+            }}>
+              {pushDiagnostics.serviceWorkerRegistered ? 'SIM' : 'NÃO'}
+            </Text>
+          </View>
+
+          {pushDiagnostics.serviceWorkerScope && (
+            <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+              <Text style={{ fontSize: '13px', color: '#6b7280' }}>Registration Scope</Text>
+              <Text style={{ fontSize: '11px', color: '#374151', fontFamily: 'monospace' }} selectable>
+                {pushDiagnostics.serviceWorkerScope}
+              </Text>
+            </View>
+          )}
+
+          <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+            <Text style={{ fontSize: '13px', color: '#6b7280' }}>Messaging Object Created</Text>
+            <Text style={{ 
+              fontSize: '13px', 
+              fontWeight: 'bold',
+              color: pushDiagnostics.messagingObjectCreated ? '#10b981' : '#ef4444'
+            }}>
+              {pushDiagnostics.messagingObjectCreated ? 'SIM' : 'NÃO'}
+            </Text>
+          </View>
+          
+          <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
             <Text style={{ fontSize: '13px', color: '#6b7280' }}>Firebase Messaging</Text>
             <Text style={{ 
               fontSize: '13px', 
@@ -464,6 +1143,22 @@ const DashboardPage: React.FC = () => {
               {pushDiagnostics.messagingAvailable ? 'DISPONÍVEL' : 'INDISPONÍVEL'}
             </Text>
           </View>
+
+          {pushDiagnostics.serviceWorkerError && (
+            <View style={{ backgroundColor: '#fef2f2', border: '1px solid #fecaca', borderRadius: '8px', padding: '10px' }}>
+              <Text style={{ fontSize: '12px', color: '#991b1b', fontWeight: 'bold', marginBottom: '4px' }}>⚠️ Service Worker Error:</Text>
+              <Text style={{ fontSize: '11px', color: '#991b1b', fontFamily: 'monospace', wordBreak: 'break-all' }} selectable>
+                {pushDiagnostics.serviceWorkerError}
+              </Text>
+            </View>
+          )}
+
+          {pushDiagnostics.messagingError && (
+            <View style={{ backgroundColor: '#fef2f2', border: '1px solid #fecaca', borderRadius: '8px', padding: '10px' }}>
+              <Text style={{ fontSize: '12px', color: '#991b1b', fontWeight: 'bold', marginBottom: '4px' }}>⚠️ Firebase Messaging Error:</Text>
+              <JsonPreview data={pushDiagnostics.messagingError} label="Detalhes do Erro" />
+            </View>
+          )}
 
           {pushDiagnostics.checkPermissionsResult && <JsonPreview data={pushDiagnostics.checkPermissionsResult} label="PushNotifications.checkPermissions()" />}
           {pushDiagnostics.requestPermissionsResult && <JsonPreview data={pushDiagnostics.requestPermissionsResult} label="PushNotifications.requestPermissions()" />}
@@ -526,9 +1221,6 @@ const DashboardPage: React.FC = () => {
           <View style={{ flexDirection: 'row', gap: '10px' }}>
             <ActionButton onClick={requestPushPermissions} variant="primary">🔑 Permissões Push</ActionButton>
             <ActionButton onClick={refreshDebugData}>🔄 Atualizar Diagnósticos</ActionButton>
-          </View>
-          <View style={{ flexDirection: 'row', gap: '10px' }}>
-            <ActionButton onClick={clearLogs}>🗑️ Limpar Logs</ActionButton>
           </View>
         </View>
       </Card>
@@ -603,32 +1295,32 @@ const DashboardPage: React.FC = () => {
 
               return (
                 <View 
-                  key={index} 
-                  style={{ 
-                    borderLeftWidth: '3px', 
-                    borderLeftColor: getLogColor(log.type), 
-                    borderLeftStyle: 'solid',
-                    padding: '12px 16px',
-                    backgroundColor: '#f9fafb',
-                    borderRadius: '0 10px 10px 0'
-                  }}
-                >
-                  <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
-                    <Text style={{ fontSize: '12px', fontWeight: '700', color: getLogColor(log.type) }}>
-                      [{log.type}]
+                    key={index} 
+                    style={{ 
+                      borderLeftWidth: '3px', 
+                      borderLeftColor: getLogColor(log.type), 
+                      borderLeftStyle: 'solid',
+                      padding: '12px 16px',
+                      backgroundColor: '#f9fafb',
+                      borderRadius: '0 10px 10px 0'
+                    }}
+                  >
+                    <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
+                      <Text style={{ fontSize: '12px', fontWeight: '700', color: getLogColor(log.type) }} selectable>
+                        [{log.type}]
+                      </Text>
+                      <Text style={{ fontSize: '10px', color: '#9ca3af' }} selectable>
+                        {new Date(log.timestamp).toLocaleTimeString('pt-BR')}
+                      </Text>
+                    </View>
+                    <Text style={{ fontSize: '13px', color: '#374151', marginBottom: '8px' }} selectable>
+                      {log.message}
                     </Text>
-                    <Text style={{ fontSize: '10px', color: '#9ca3af' }}>
-                      {new Date(log.timestamp).toLocaleTimeString('pt-BR')}
-                    </Text>
-                  </View>
-                  <Text style={{ fontSize: '13px', color: '#374151', marginBottom: '8px' }}>
-                    {log.message}
-                  </Text>
-                  {log.data && (
-                    <Text style={{ fontSize: '11px', color: '#6b7280', fontFamily: 'monospace', wordBreak: 'break-all' }} selectable>
-                      {typeof log.data === 'object' ? JSON.stringify(log.data, null, 2) : String(log.data)}
-                    </Text>
-                  )}
+                    {log.data && (
+                      <Text style={{ fontSize: '11px', color: '#6b7280', fontFamily: 'monospace', wordBreak: 'break-all' }} selectable>
+                        {typeof log.data === 'object' ? JSON.stringify(log.data, null, 2) : String(log.data)}
+                      </Text>
+                    )}
                 </View>
               );
             })

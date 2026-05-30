@@ -2,7 +2,7 @@
 import { Capacitor } from '@capacitor/core';
 import { PushNotifications, PushNotificationSchema, ActionPerformed, Token } from '@capacitor/push-notifications';
 import { updateUserFcmToken } from './adminService';
-import { getFcmToken, onFcmMessage } from './firebase';
+import { getFcmToken, onFcmMessage, getDiagnosticFirebaseConfig, isFirebaseConfigured } from './firebase';
 import Taro from '@tarojs/taro';
 
 // Armazena o token FCM e os listeners para limpeza
@@ -157,11 +157,140 @@ const initializeNativePush = async (userId?: string): Promise<void> => {
  */
 const initializeWebPush = async (userId?: string): Promise<void> => {
   try {
-    // Verifica se temos Firebase Messaging
+    log('[initializeWebPush] INICIANDO DIAGNÓSTICO COMPLETO...');
+
+    // Diagnóstico: verificar navigator.serviceWorker
+    const hasServiceWorkerAPI = 'serviceWorker' in navigator;
+    log('[initializeWebPush] navigator.serviceWorker disponível', { available: hasServiceWorkerAPI });
+
+    // Diagnóstico: verificar Notification API
+    const hasNotificationAPI = 'Notification' in window;
+    let notificationPermission = 'unsupported';
+    if (hasNotificationAPI) {
+      notificationPermission = Notification.permission;
+    }
+    log('[initializeWebPush] Notification API status', {
+      available: hasNotificationAPI,
+      permission: notificationPermission,
+    });
+
+    if (typeof window !== 'undefined') {
+      (window as any).__DEBUG_PUSH__ = (window as any).__DEBUG_PUSH__ || { logs: [], lastSent: null, lastReceived: null, lastError: null, lastTokenUpdate: null };
+      (window as any).__DEBUG_PUSH__.serviceWorkerAPIAvailable = hasServiceWorkerAPI;
+      (window as any).__DEBUG_PUSH__.notificationAPIAvailable = hasNotificationAPI;
+      (window as any).__DEBUG_PUSH__.notificationPermission = notificationPermission;
+    }
+
+    // Diagnóstico: isSupported() do Firebase Messaging?
+    // Verificar se o navegador suporta Firebase Messaging
+    let isMessagingSupported = false;
+    try {
+      // Tentar importar isSupported (mas se não disponível, usar checks básicos)
+      isMessagingSupported = hasServiceWorkerAPI && hasNotificationAPI && ('PushManager' in window);
+      log('[initializeWebPush] isSupported() (básico)', { isSupported: isMessagingSupported });
+      if (typeof window !== 'undefined') {
+        (window as any).__DEBUG_PUSH__.messagingIsSupported = isMessagingSupported;
+      }
+    } catch (e) {
+      logError('[initializeWebPush] Erro ao verificar suporte do Messaging', e);
+    }
+
+    // Tenta obter registros de service worker existentes
+    let existingSWRegistrations: ServiceWorkerRegistration[] = [];
+    if (hasServiceWorkerAPI) {
+      try {
+        existingSWRegistrations = await navigator.serviceWorker.getRegistrations();
+        log('[initializeWebPush] Service Workers existentes', {
+          count: existingSWRegistrations.length,
+          scopes: existingSWRegistrations.map(r => r.scope),
+        });
+        if (typeof window !== 'undefined') {
+          (window as any).__DEBUG_PUSH__.existingSWRegistrations = existingSWRegistrations.map(r => ({
+            scope: r.scope,
+            active: !!r.active,
+            waiting: !!r.waiting,
+            installing: !!r.installing,
+          }));
+        }
+
+        // Unregister all old SWs to avoid conflicts!
+        log('[initializeWebPush] Removendo todos os SWs antigos para limpar');
+        for (const reg of existingSWRegistrations) {
+          await reg.unregister();
+          log('[initializeWebPush] SW removido:', reg.scope);
+        }
+      } catch (swListErr) {
+        logError('[initializeWebPush] Erro ao listar SW existentes', swListErr);
+      }
+    }
+
+    // Tenta registrar o service worker do Firebase ANTES de chamar getMessaging
+    let swRegistration: ServiceWorkerRegistration | null = null;
+    if (hasServiceWorkerAPI) {
+      try {
+        const swPath = '/firebase-messaging-sw.js';
+        log('[initializeWebPush] Registrando service worker', { path: swPath });
+
+        // Step 1: Test fetching SW first to check if it exists and what the content is
+        try {
+          const swFetch = await fetch(swPath);
+          log('[initializeWebPush] SW fetch result', { status: swFetch.status, ok: swFetch.ok });
+          const swText = await swFetch.text();
+          log('[initializeWebPush] SW content (primeiros 500 chars)', swText.substring(0, 500));
+        } catch (fetchErr) {
+          logError('[initializeWebPush] Falha ao buscar SW via fetch', fetchErr);
+        }
+
+        swRegistration = await navigator.serviceWorker.register(swPath);
+        log('[initializeWebPush] Service Worker registrado com sucesso', {
+          scope: swRegistration.scope,
+          active: !!swRegistration.active,
+          waiting: !!swRegistration.waiting,
+          installing: !!swRegistration.installing,
+        });
+        
+        if (typeof window !== 'undefined') {
+          (window as any).__DEBUG_PUSH__.serviceWorkerRegistered = true;
+          (window as any).__DEBUG_PUSH__.serviceWorkerScope = swRegistration.scope;
+          (window as any).__DEBUG_PUSH__.serviceWorkerActive = !!swRegistration.active;
+          (window as any).__DEBUG_PUSH__.serviceWorkerWaiting = !!swRegistration.waiting;
+          (window as any).__DEBUG_PUSH__.serviceWorkerInstalling = !!swRegistration.installing;
+        }
+      } catch (registerError: any) {
+        logError('[initializeWebPush] Falha ao registrar service worker', {
+          errorName: registerError?.name || 'unknown',
+          errorMessage: registerError?.message || 'sem mensagem',
+          errorStack: registerError?.stack || 'sem stack',
+        });
+        if (typeof window !== 'undefined') {
+          (window as any).__DEBUG_PUSH__.serviceWorkerRegistered = false;
+          (window as any).__DEBUG_PUSH__.serviceWorkerError = registerError?.message;
+        }
+      }
+    } else {
+      log('[initializeWebPush] Service Worker API não disponível neste navegador');
+    }
+
+    // Agora tenta obter Firebase Messaging
+    log('[initializeWebPush] Obtendo Firebase Messaging...');
     const messaging = getFirebaseMessaging();
+    
     if (!messaging) {
-      logError('Firebase Messaging não está disponível no navegador');
+      const diag = typeof getDiagnosticFirebaseConfig === 'function' ? getDiagnosticFirebaseConfig() : {};
+      logError('[initializeWebPush] Firebase Messaging não está disponível no navegador', { diagnostic: diag });
+      if (typeof window !== 'undefined') {
+        (window as any).__DEBUG_PUSH__ = (window as any).__DEBUG_PUSH__ || { logs: [], lastSent: null, lastReceived: null, lastError: null, lastTokenUpdate: null };
+        (window as any).__DEBUG_PUSH__.messagingAvailable = false;
+        (window as any).__DEBUG_PUSH__.firebaseDiagnostic = diag;
+        (window as any).__DEBUG_PUSH__.messagingObjectCreated = false;
+      }
       return;
+    }
+
+    log('[initializeWebPush] Firebase Messaging criado com sucesso');
+    if (typeof window !== 'undefined') {
+      (window as any).__DEBUG_PUSH__.messagingAvailable = true;
+      (window as any).__DEBUG_PUSH__.messagingObjectCreated = true;
     }
 
     // Adiciona listener para mensagens em primeiro plano
@@ -170,26 +299,59 @@ const initializeWebPush = async (userId?: string): Promise<void> => {
     // Solicita permissão de notificações
     if ('Notification' in window) {
       const permission = await Notification.requestPermission();
+      log('[initializeWebPush] Permissão de notificações após requestPermission()', { permission });
+      if (typeof window !== 'undefined') {
+        (window as any).__DEBUG_PUSH__.notificationPermission = permission;
+      }
+
       if (permission === 'granted') {
-        log('Permissão de notificações concedida no navegador');
+        log('[initializeWebPush] Permissão de notificações concedida');
         
         // Obtém token FCM para Web
-        const webToken = await getFcmToken();
-        if (webToken) {
-          log('Token FCM Web obtido', { token: webToken.substring(0, 20) + '...' });
-          saveTokenLocal(webToken);
-          if (userId) {
-            await saveTokenToFirebase(webToken, userId);
+        try {
+          log('[initializeWebPush] Chamando getFcmToken()...');
+          const webToken = await getFcmToken(swRegistration || undefined);
+          if (webToken) {
+            log('[initializeWebPush] Token FCM Web obtido', { token: webToken.substring(0, 20) + '...' });
+            saveTokenLocal(webToken);
+            if (userId) {
+              await saveTokenToFirebase(webToken, userId);
+            }
+            if (typeof window !== 'undefined') {
+              (window as any).__DEBUG_PUSH__.getFcmTokenSuccess = true;
+            }
+          } else {
+            logError('[initializeWebPush] Não foi possível obter token FCM Web: getFcmToken retornou null');
+            if (typeof window !== 'undefined') {
+              (window as any).__DEBUG_PUSH__.getFcmTokenSuccess = false;
+              (window as any).__DEBUG_PUSH__.getFcmTokenError = 'retornou null';
+            }
           }
-        } else {
-          logError('Não foi possível obter token FCM Web');
+        } catch (getTokenErr: any) {
+          logError('[initializeWebPush] Erro ao obter token FCM Web', {
+            name: getTokenErr?.name,
+            code: getTokenErr?.code,
+            message: getTokenErr?.message,
+            stack: getTokenErr?.stack,
+          });
+          if (typeof window !== 'undefined') {
+            (window as any).__DEBUG_PUSH__.getFcmTokenSuccess = false;
+            (window as any).__DEBUG_PUSH__.getFcmTokenError = getTokenErr?.message || 'unknown';
+          }
         }
       } else {
-        logError('Permissão de notificações negada no navegador');
+        logError('[initializeWebPush] Permissão de notificações negada');
       }
+    } else {
+      logError('[initializeWebPush] Notification API não disponível');
     }
-  } catch (error) {
-    logError('Falha ao inicializar push notifications web', error);
+  } catch (error: any) {
+    logError('[initializeWebPush] Falha ao inicializar push notifications web', {
+      name: error?.name,
+      code: error?.code,
+      message: error?.message,
+      stack: error?.stack,
+    });
   }
 };
 
@@ -229,7 +391,7 @@ const addNativeListeners = (userId?: string) => {
       
       // Mostra a notificação como banner mesmo com app aberto
       try {
-        await PushNotifications.localNotification({
+        await (PushNotifications as any).localNotification({
           title: notification.title || 'Nova Notificação',
           body: notification.body || '',
           id: Math.floor(Math.random() * 100000),
@@ -305,7 +467,31 @@ const createAndroidChannel = async () => {
 export const saveTokenToFirebase = async (token: string, userId: string) => {
   try {
     log('Salvando token FCM no Firebase para usuário', { userId, token: token.substring(0, 20) + '...' });
-    await updateUserFcmToken(userId, token);
+    // Try client-side save first
+    try {
+      await updateUserFcmToken(userId, token);
+    } catch (e) {
+      logError('updateUserFcmToken falhou, tentarei via endpoint server', e);
+    }
+
+    // If client cannot save because Firebase not configured in-browser, fallback to server endpoint
+    if (!isFirebaseConfigured()) {
+      try {
+        const resp = await fetch('/api/register-token', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ userId, token }),
+        });
+        if (!resp.ok) {
+          const txt = await resp.text();
+          logError('Falha ao salvar token via /api/register-token', { status: resp.status, body: txt });
+        } else {
+          log('Token salvo via endpoint server /api/register-token');
+        }
+      } catch (serverErr) {
+        logError('Erro chamando /api/register-token', serverErr);
+      }
+    }
     log('Token FCM salvo com sucesso no Firebase');
   } catch (error) {
     logError('Erro ao salvar token no Firebase', error);

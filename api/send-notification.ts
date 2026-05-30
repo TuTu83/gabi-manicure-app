@@ -103,6 +103,10 @@ export default async function handler(request: VercelRequest, response: VercelRe
       );
     }
 
+    console.log('[FCM SERVER] Requisição recebida');
+    console.log('[FCM SERVER] Tokens recebidos:', tokensToUse);
+    console.log('[FCM SERVER] Quantidade:', tokensToUse?.length || 0);
+    console.log('[FCM SERVER] Payload:', { title, body: messageBody, data });
     console.log(`[${new Date().toISOString()}] [API send-notification] Tokens to send (${tokensToUse.length}):`, tokensToUse.map((t: string) => `${t.substring(0, 10)}...`));
     console.log(`[${new Date().toISOString()}] [API send-notification] Preparing to send notifications...`);
 
@@ -110,11 +114,30 @@ export default async function handler(request: VercelRequest, response: VercelRe
       token,
       notification: {
         title,
-        body: messageBody
+        body: messageBody,
       },
       data: {
         ...data,
-        click_action: "FLUTTER_NOTIFICATION_CLICK" // For compatibility
+        click_action: 'FLUTTER_NOTIFICATION_CLICK',
+      },
+      webpush: {
+        headers: {
+          Urgency: 'high',
+        },
+        notification: {
+          title,
+          body: messageBody,
+          icon: '/icon.svg',
+          badge: '/icon.svg',
+          vibrate: [100, 50, 100],
+          requireInteraction: true,
+          tag: 'gabi_manicure_notification',
+          renotify: true,
+          data: {
+            ...data,
+            click_action: 'FLUTTER_NOTIFICATION_CLICK',
+          },
+        },
       },
       android: {
         priority: 'high' as const,
@@ -122,10 +145,12 @@ export default async function handler(request: VercelRequest, response: VercelRe
         notification: {
           channelId: 'gabi_manicure_channel_high_importance',
           sound: 'default',
+          defaultSound: true,
+          defaultVibrateTimings: true,
           icon: '@mipmap/ic_launcher',
           tag: 'gabi_manicure_notification',
           color: '#e8558f',
-          clickAction: 'FLUTTER_NOTIFICATION_CLICK'
+          clickAction: 'FLUTTER_NOTIFICATION_CLICK',
         }
       },
       apns: { // Just in case we ever have iOS
@@ -134,9 +159,9 @@ export default async function handler(request: VercelRequest, response: VercelRe
             sound: 'default',
             alert: {
               title,
-              body: messageBody
+              body: messageBody,
             },
-            badge: 1
+            badge: 1,
           }
         }
       }
@@ -153,10 +178,15 @@ export default async function handler(request: VercelRequest, response: VercelRe
       });
     }
 
+    console.log('[FCM SERVER] Enviando para Firebase...');
     console.log(`[${new Date().toISOString()}] [API send-notification] Calling sendEach...`);
     // Send each message individually using sendEach
     const fcmResponse = await admin.messaging().sendEach(messages);
     
+    console.log('[FCM SERVER] Resposta completa Firebase:', fcmResponse);
+    console.log('[FCM SERVER] Success count:', fcmResponse.successCount);
+    console.log('[FCM SERVER] Failure count:', fcmResponse.failureCount);
+
     console.log(`\n[${new Date().toISOString()}] [API send-notification] Send completed!`);
     console.log(`[${new Date().toISOString()}] [API send-notification] Success count:`, fcmResponse.successCount, '✅');
     console.log(`[${new Date().toISOString()}] [API send-notification] Failure count:`, fcmResponse.failureCount, '❌');
@@ -171,6 +201,17 @@ export default async function handler(request: VercelRequest, response: VercelRe
         } : null
       }))
     );
+
+    // For each individual response
+    fcmResponse.responses.forEach((r, index) => {
+      console.log('[FCM SERVER] Token:', tokensToUse[index].substring(0, 20) + '...');
+      console.log('[FCM SERVER] Resultado:', r);
+
+      if (r.error) {
+        console.error('[FCM SERVER] Token inválido detectado:', tokensToUse[index].substring(0, 20) + '...');
+        console.error('[FCM SERVER] Erro Firebase:', r.error);
+      }
+    });
 
     return response.status(200).json({ 
       success: true, 

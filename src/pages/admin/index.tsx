@@ -46,6 +46,7 @@ function statusLabel(status: AppointmentStatus, onMyWayAt?: number): string {
 function AdminPage() {
   const { checking, allowed, currentUser } = useAdminGuard();
   const settings = useAppStore((s) => s.settings);
+  const setSettings = useAppStore((s) => s.setSettings);
 
   const [open, setOpen] = useState({
     dashboard: false,

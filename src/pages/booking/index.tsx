@@ -329,7 +329,7 @@ function BookingPage() {
         professionalName: selectedProfessional.name,
         startAt,
         endAt,
-        notes: bookingNotes.trim() || null,
+        notes: bookingNotes.trim() || undefined,
       });
 
       await createNotification({
@@ -596,7 +596,7 @@ function BookingPage() {
                             {showImage ? (
                               <Image
                                 className={styles.serviceImage}
-                                src={s.imageUrl}
+                                src={s.imageUrl as string}
                                 mode="aspectFill"
                                 onError={() => setBrokenServiceImages((prev) => ({ ...prev, [imageKey]: true }))}
                               />

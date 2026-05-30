@@ -26,6 +26,20 @@ export default defineConfig<'webpack5'>(async (merge, { command, mode }) => {
       patterns: [
         { from: 'src/pwa/manifest.webmanifest', to: 'dist/manifest.webmanifest' },
         { from: 'src/pwa/sw.js', to: 'dist/sw.js' },
+        {
+          from: 'src/pwa/firebase-messaging-sw.js',
+          to: 'dist/firebase-messaging-sw.js',
+          transform(content) {
+            return content
+              .toString()
+              .replace('__GM_FIREBASE_API_KEY__', process.env.TARO_APP_FIREBASE_API_KEY || '')
+              .replace('__GM_FIREBASE_AUTH_DOMAIN__', process.env.TARO_APP_FIREBASE_AUTH_DOMAIN || '')
+              .replace('__GM_FIREBASE_PROJECT_ID__', process.env.TARO_APP_FIREBASE_PROJECT_ID || '')
+              .replace('__GM_FIREBASE_STORAGE_BUCKET__', process.env.TARO_APP_FIREBASE_STORAGE_BUCKET || '')
+              .replace('__GM_FIREBASE_MESSAGING_SENDER_ID__', process.env.TARO_APP_FIREBASE_MESSAGING_SENDER_ID || '')
+              .replace('__GM_FIREBASE_APP_ID__', process.env.TARO_APP_FIREBASE_APP_ID || '');
+          },
+        },
         { from: 'src/pwa/icon.svg', to: 'dist/icon.svg' },
         { from: 'src/pwa/OneSignalSDKWorker.js', to: 'dist/OneSignalSDKWorker.js' },
         { from: 'src/pwa/OneSignalSDK-v16-ServiceWorker.zip', to: 'dist/OneSignalSDK-v16-ServiceWorker.zip' },

@@ -1,7 +1,6 @@
 import Taro from '@tarojs/taro';
 import dayjs from 'dayjs';
 import {
-  addDoc,
   collection,
   doc,
   getDocs,
@@ -28,36 +27,6 @@ import type { UserProfile } from '@/types/user';
 const appointmentsKey = 'gm.appointments';
 const reviewsKey = 'gm.reviews';
 const waitlistKey = 'gm.waitlist';
-
-async function getAdminFcmToken(): Promise<string | null> {
-  try {
-    console.log('[getAdminFcmToken] Starting...');
-    const db = getFirebaseDb();
-    if (!db) {
-      console.error('[getAdminFcmToken] Firebase DB not available');
-      return null;
-    }
-    
-    const ADMIN_EMAIL = 'suporte.gabimanicure@gmail.com';
-    const q = query(collection(db, 'users'), where('email', '==', ADMIN_EMAIL), limit(1));
-    const snap = await getDocs(q);
-    
-    console.log('[getAdminFcmToken] Found', snap.size, 'admin users with email:', ADMIN_EMAIL);
-    
-    if (!snap.empty) {
-      const adminData = snap.docs[0].data() as UserProfile;
-      const token = adminData.fcmToken || null;
-      console.log('[getAdminFcmToken] Admin FCM token:', token ? 'found' : 'NOT FOUND');
-      console.log('[getAdminFcmToken] Admin data:', adminData);
-      return token;
-    }
-    console.error('[getAdminFcmToken] No admin user found with email:', ADMIN_EMAIL);
-    return null;
-  } catch (error) {
-    console.error('[getAdminFcmToken] Error getting admin FCM token:', error);
-    return null;
-  }
-}
 
 async function getUserFcmTokens(userId: string): Promise<string[]> {
   try {
@@ -110,25 +79,52 @@ async function sendFcmNotification({
   const payload = { title, body, fcmTokens, data };
   const timestamp = Date.now();
 
+  console.log('[sendFcmNotification] função chamada');
+  console.log('[sendFcmNotification] tokens:', fcmTokens);
+  console.log('[sendFcmNotification] payload:', payload);
   // Logs antes da chamada
+  console.log('[FCM CLIENT] Iniciando envio');
+  console.log('[FCM CLIENT] Usuário destino:', 'admin (admin)');
+  console.log('[FCM CLIENT] Tokens encontrados:', fcmTokens);
+  console.log('[FCM CLIENT] Quantidade de tokens:', fcmTokens?.length || 0);
+  console.log('[FCM CLIENT] Payload completo:', payload);
   console.log('[sendFcmNotification] 🔄 Iniciando chamada...');
   console.log('[sendFcmNotification] Endpoint:', apiUrl);
   console.log('[sendFcmNotification] Payload:', payload);
   
   // Salvar na página de debug
   if (typeof window !== 'undefined') {
-    if (!window.__DEBUG_PUSH__) {
-      window.__DEBUG_PUSH__ = { logs: [], lastSent: null, lastReceived: null, lastError: null, lastApiCall: null };
+    const debugWindow = window as any;
+    if (!debugWindow.__DEBUG_PUSH__) {
+      debugWindow.__DEBUG_PUSH__ = { logs: [], lastSent: null, lastReceived: null, lastError: null, lastApiCall: null };
     }
-    window.__DEBUG_PUSH__.lastApiCall = {
+    debugWindow.__DEBUG_PUSH__.lastApiCall = {
       url: apiUrl,
       payload,
       timestamp,
       status: 'pending',
     };
+    // Update lastSendFlow
+    debugWindow.__DEBUG_PUSH__.lastSendFlow = {
+      functionCalled: true,
+      tokensFound: Array.isArray(fcmTokens) && fcmTokens.length > 0,
+      tokens: fcmTokens,
+      payload,
+      apiCalled: false,
+      httpStatus: null,
+      apiResponse: null,
+      timestamp: new Date().toISOString(),
+    };
   }
 
   try {
+    console.log('[sendFcmNotification] chamando API');
+    if (typeof window !== 'undefined') {
+      const debugWindow = window as any;
+      if (debugWindow.__DEBUG_PUSH__) {
+        debugWindow.__DEBUG_PUSH__.lastSendFlow.apiCalled = true;
+      }
+    }
     const response = await fetch(apiUrl, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -136,20 +132,35 @@ async function sendFcmNotification({
     });
     
     // Logs após a chamada
-    console.log('[sendFcmNotification] ✅ Status HTTP:', response.status);
+    console.log('[sendFcmNotification] status:', response.status);
     
-    const result = await response.json();
-    console.log('[sendFcmNotification] 📄 Resposta completa:', result);
+    // Obter texto bruto para debug
+    const rawText = await response.text();
+    console.log('[sendFcmNotification] resposta bruta (raw):', rawText);
+    
+    let result;
+    try {
+      result = JSON.parse(rawText);
+    } catch (parseError) {
+      console.error('[sendFcmNotification] erro ao parsear JSON:', parseError);
+      result = { rawText };
+    }
+    
+    console.log('[sendFcmNotification] resposta:', result);
     
     // Salvar na página de debug
     if (typeof window !== 'undefined') {
-      window.__DEBUG_PUSH__.lastApiCall = {
+      const debugWindow = window as any;
+      debugWindow.__DEBUG_PUSH__.lastApiCall = {
         url: apiUrl,
         payload,
         timestamp,
         status: response.status,
         response: result,
       };
+      // Update lastSendFlow
+      debugWindow.__DEBUG_PUSH__.lastSendFlow.httpStatus = response.status;
+      debugWindow.__DEBUG_PUSH__.lastSendFlow.apiResponse = result;
     }
 
     if (!response.ok) {
@@ -162,13 +173,16 @@ async function sendFcmNotification({
     
     // Salvar erro na página de debug
     if (typeof window !== 'undefined') {
-      window.__DEBUG_PUSH__.lastApiCall = {
+      const debugWindow = window as any;
+      debugWindow.__DEBUG_PUSH__.lastApiCall = {
         url: apiUrl,
         payload,
         timestamp,
         status: 'error',
         error: String(error),
       };
+      // Update lastSendFlow for error case
+      debugWindow.__DEBUG_PUSH__.lastSendFlow.error = String(error);
     }
     
     throw error;
@@ -432,7 +446,27 @@ export async function createAppointment(input: Omit<Appointment, 'id' | 'created
   });
 
   // Send FCM notifications
+  console.log('[AGENDAMENTO] Iniciando envio de notificação');
+  console.log('[AGENDAMENTO] appointmentId:', appointment.id);
+  console.log('[AGENDAMENTO] userId:', input.userId);
   console.log('[createAppointment] Preparing to send FCM notifications...');
+  // Initialize lastSendFlow
+  if (typeof window !== 'undefined') {
+    const debugWindow = window as any;
+    if (!debugWindow.__DEBUG_PUSH__) {
+      debugWindow.__DEBUG_PUSH__ = { logs: [], lastSent: null, lastReceived: null, lastError: null, lastApiCall: null };
+    }
+    debugWindow.__DEBUG_PUSH__.lastSendFlow = {
+      functionCalled: false,
+      tokensFound: false,
+      tokens: null,
+      payload: null,
+      apiCalled: false,
+      httpStatus: null,
+      apiResponse: null,
+      timestamp: new Date().toISOString(),
+    };
+  }
   try {
     const adminFcmTokens = await getAdminFcmTokens();
     const clientFcmTokens = await getUserFcmTokens(input.userId);
@@ -449,11 +483,18 @@ export async function createAppointment(input: Omit<Appointment, 'id' | 'created
     
     console.log('[createAppointment] Tokens to send:', tokensToSend.map(t => `${t.substring(0,10)}...`));
     
+    // Update lastSendFlow with token info
+    if (typeof window !== 'undefined') {
+      const debugWindow = window as any;
+      debugWindow.__DEBUG_PUSH__.lastSendFlow.tokensFound = Array.isArray(tokensToSend) && tokensToSend.length > 0;
+      debugWindow.__DEBUG_PUSH__.lastSendFlow.tokens = tokensToSend;
+    }
+    
     if (tokensToSend.length > 0) {
       console.log('[createAppointment] Calling sendFcmNotification...');
       await sendFcmNotification({
         title: 'Novo Agendamento!',
-        body: `${input.clientName || 'Cliente'} agendou para ${dateStr} às ${timeStr}`,
+        body: `${input.userName || 'Cliente'} agendou para ${dateStr} às ${timeStr}`,
         fcmTokens: tokensToSend,
         data: {
           type: 'new_appointment',
@@ -467,6 +508,12 @@ export async function createAppointment(input: Omit<Appointment, 'id' | 'created
     }
   } catch (error) {
     console.error('[createAppointment] Error sending FCM notifications for new appointment:', error);
+    if (typeof window !== 'undefined') {
+      const debugWindow = window as any;
+      if (debugWindow.__DEBUG_PUSH__) {
+        debugWindow.__DEBUG_PUSH__.lastSendFlow.error = String(error);
+      }
+    }
   }
 
   return appointment;
@@ -509,9 +556,32 @@ export async function cancelAppointment(appointmentId: string): Promise<void> {
   });
 
   // Send FCM notifications for cancellation
+  console.log('[AGENDAMENTO] Iniciando envio de notificação de cancelamento');
+  console.log('[AGENDAMENTO] appointmentId:', appointmentId);
+  if (appointmentData) {
+    console.log('[AGENDAMENTO] userId:', appointmentData.userId);
+  }
   console.log('[cancelAppointment] Preparing to send FCM notifications...');
   if (appointmentData) {
     try {
+      // Initialize lastSendFlow for cancel as well
+      if (typeof window !== 'undefined') {
+        const debugWindow = window as any;
+        if (!debugWindow.__DEBUG_PUSH__) {
+          debugWindow.__DEBUG_PUSH__ = { logs: [], lastSent: null, lastReceived: null, lastError: null, lastApiCall: null };
+        }
+        debugWindow.__DEBUG_PUSH__.lastSendFlow = {
+          functionCalled: false,
+          tokensFound: false,
+          tokens: null,
+          payload: null,
+          apiCalled: false,
+          httpStatus: null,
+          apiResponse: null,
+          timestamp: new Date().toISOString(),
+        };
+      }
+
       const adminFcmTokens = await getAdminFcmTokens();
       const clientFcmTokens = await getUserFcmTokens(appointmentData.userId);
       
@@ -527,11 +597,18 @@ export async function cancelAppointment(appointmentId: string): Promise<void> {
       
       console.log('[cancelAppointment] Tokens to send:', tokensToSend.map(t => `${t.substring(0,10)}...`));
       
+      // Update lastSendFlow with token info
+      if (typeof window !== 'undefined') {
+        const debugWindow = window as any;
+        debugWindow.__DEBUG_PUSH__.lastSendFlow.tokensFound = Array.isArray(tokensToSend) && tokensToSend.length > 0;
+        debugWindow.__DEBUG_PUSH__.lastSendFlow.tokens = tokensToSend;
+      }
+      
       if (tokensToSend.length > 0) {
         console.log('[cancelAppointment] Calling sendFcmNotification...');
         await sendFcmNotification({
           title: 'Agendamento Cancelado',
-          body: `${appointmentData.clientName || 'Cliente'} cancelou o agendamento de ${dateStr} às ${timeStr}`,
+          body: `${appointmentData.userName || 'Cliente'} cancelou o agendamento de ${dateStr} às ${timeStr}`,
           fcmTokens: tokensToSend,
           data: {
             type: 'appointment_cancelled',
@@ -545,6 +622,12 @@ export async function cancelAppointment(appointmentId: string): Promise<void> {
       }
     } catch (error) {
       console.error('[cancelAppointment] Error sending FCM notifications for cancellation:', error);
+      if (typeof window !== 'undefined') {
+        const debugWindow = window as any;
+        if (debugWindow.__DEBUG_PUSH__) {
+          debugWindow.__DEBUG_PUSH__.lastSendFlow.error = String(error);
+        }
+      }
     }
   } else {
     console.warn('[cancelAppointment] No appointment data found!');
@@ -660,14 +743,39 @@ export async function markOnMyWay(appointmentId: string): Promise<void> {
   // Send FCM notification to admin when client is on the way
   if (appointmentData) {
     try {
+      // Initialize lastSendFlow
+      if (typeof window !== 'undefined') {
+        const debugWindow = window as any;
+        if (!debugWindow.__DEBUG_PUSH__) {
+          debugWindow.__DEBUG_PUSH__ = { logs: [], lastSent: null, lastReceived: null, lastError: null, lastApiCall: null };
+        }
+        debugWindow.__DEBUG_PUSH__.lastSendFlow = {
+          functionCalled: false,
+          tokensFound: false,
+          tokens: null,
+          payload: null,
+          apiCalled: false,
+          httpStatus: null,
+          apiResponse: null,
+          timestamp: new Date().toISOString(),
+        };
+      }
+      
       const adminFcmTokens = await getAdminFcmTokens();
       const timeStr = dayjs(appointmentData.startAt).format('HH:mm');
+      
+      // Update lastSendFlow with token info
+      if (typeof window !== 'undefined') {
+        const debugWindow = window as any;
+        debugWindow.__DEBUG_PUSH__.lastSendFlow.tokensFound = Array.isArray(adminFcmTokens) && adminFcmTokens.length > 0;
+        debugWindow.__DEBUG_PUSH__.lastSendFlow.tokens = adminFcmTokens;
+      }
       
       if (adminFcmTokens.length > 0) {
         console.log('[markOnMyWay] Calling sendFcmNotification...');
         await sendFcmNotification({
           title: 'Cliente está a caminho!',
-          body: `${appointmentData.clientName} está a caminho para o horário de ${timeStr}!`,
+          body: `${appointmentData.userName || 'Cliente'} está a caminho para o horário de ${timeStr}!`,
           fcmTokens: adminFcmTokens,
           data: {
             type: 'client_on_my_way',
@@ -679,6 +787,12 @@ export async function markOnMyWay(appointmentId: string): Promise<void> {
       }
     } catch (error) {
       console.error('[markOnMyWay] Error sending FCM notification for on-my-way:', error);
+      if (typeof window !== 'undefined') {
+        const debugWindow = window as any;
+        if (debugWindow.__DEBUG_PUSH__) {
+          debugWindow.__DEBUG_PUSH__.lastSendFlow.error = String(error);
+        }
+      }
     }
   }
 }
@@ -776,6 +890,24 @@ export async function rescheduleAppointment(params: {
   console.log('[rescheduleAppointment] Preparing to send FCM notifications...');
   if (appointmentData) {
     try {
+      // Initialize lastSendFlow
+      if (typeof window !== 'undefined') {
+        const debugWindow = window as any;
+        if (!debugWindow.__DEBUG_PUSH__) {
+          debugWindow.__DEBUG_PUSH__ = { logs: [], lastSent: null, lastReceived: null, lastError: null, lastApiCall: null };
+        }
+        debugWindow.__DEBUG_PUSH__.lastSendFlow = {
+          functionCalled: false,
+          tokensFound: false,
+          tokens: null,
+          payload: null,
+          apiCalled: false,
+          httpStatus: null,
+          apiResponse: null,
+          timestamp: new Date().toISOString(),
+        };
+      }
+      
       const adminFcmTokens = await getAdminFcmTokens();
       const clientFcmTokens = await getUserFcmTokens(appointmentData.userId);
       
@@ -791,11 +923,18 @@ export async function rescheduleAppointment(params: {
       
       console.log('[rescheduleAppointment] Tokens to send:', tokensToSend.map(t => `${t.substring(0,10)}...`));
       
+      // Update lastSendFlow with token info
+      if (typeof window !== 'undefined') {
+        const debugWindow = window as any;
+        debugWindow.__DEBUG_PUSH__.lastSendFlow.tokensFound = Array.isArray(tokensToSend) && tokensToSend.length > 0;
+        debugWindow.__DEBUG_PUSH__.lastSendFlow.tokens = tokensToSend;
+      }
+      
       if (tokensToSend.length > 0) {
         console.log('[rescheduleAppointment] Calling sendFcmNotification...');
         await sendFcmNotification({
           title: 'Agendamento Reagendado!',
-          body: `${appointmentData.clientName} reagendou para ${dateStr} às ${timeStr}`,
+          body: `${appointmentData.userName || 'Cliente'} reagendou para ${dateStr} às ${timeStr}`,
           fcmTokens: tokensToSend,
           data: {
             type: 'appointment_rescheduled',
@@ -809,6 +948,12 @@ export async function rescheduleAppointment(params: {
       }
     } catch (error) {
       console.error('[rescheduleAppointment] Error sending FCM notifications for reschedule:', error);
+      if (typeof window !== 'undefined') {
+        const debugWindow = window as any;
+        if (debugWindow.__DEBUG_PUSH__) {
+          debugWindow.__DEBUG_PUSH__.lastSendFlow.error = String(error);
+        }
+      }
     }
   } else {
     console.warn('[rescheduleAppointment] No appointment data found!');
