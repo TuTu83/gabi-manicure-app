@@ -5,7 +5,6 @@ import { Capacitor } from '@capacitor/core';
 import { PushNotifications } from '@capacitor/push-notifications';
 import { initializePushNotifications, getCurrentFcmToken, checkPushPermissions } from '../../services/pushService';
 import { getFirebaseMessaging, getFcmToken, onFcmMessage } from '../../services/firebase';
-import { useAuth } from '../../store/authStore';
 
 type LogType = 'ERROR' | 'WARN' | 'INFO' | 'SUCCESS';
 
@@ -33,7 +32,6 @@ interface PushDiagnostics {
 }
 
 const DashboardPage: React.FC = () => {
-  const { user } = useAuth();
   
   const [debugData, setDebugData] = useState<{
     logs: LogItem[];
@@ -124,11 +122,7 @@ const DashboardPage: React.FC = () => {
     try {
       const isNative = Capacitor.isNativePlatform();
       
-      if (user?.uid) {
-        await initializePushNotifications(user.uid);
-      } else {
-        await initializePushNotifications();
-      }
+      await initializePushNotifications();
 
       if (isNative) {
         const reqResult = await PushNotifications.requestPermissions();
@@ -143,9 +137,7 @@ const DashboardPage: React.FC = () => {
             requestPermissionsResult: { receive: permission } 
           }));
           
-          if (user?.uid) {
-            await initializePushNotifications(user.uid);
-          }
+          await initializePushNotifications();
         }
       }
 
