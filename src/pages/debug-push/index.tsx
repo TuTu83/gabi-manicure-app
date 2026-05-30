@@ -3,6 +3,9 @@ import { View, Text, Button, ScrollView } from '@tarojs/components';
 import Taro from '@tarojs/taro';
 import { Capacitor } from '@capacitor/core';
 import { PushNotifications } from '@capacitor/push-notifications';
+import { initializePushNotifications, getCurrentFcmToken, checkPushPermissions } from '../../services/pushService';
+import { getFirebaseMessaging, getFcmToken, onFcmMessage } from '../../services/firebase';
+import { useAuth } from '../../store/authStore';
 
 type LogType = 'ERROR' | 'WARN' | 'INFO' | 'SUCCESS';
 
@@ -26,9 +29,12 @@ interface PushDiagnostics {
   registrationStatus: 'unknown' | 'registered' | 'not_registered' | 'error';
   fcmToken: string | null;
   lastTokenUpdate: number | null;
+  messagingAvailable: boolean;
 }
 
 const DashboardPage: React.FC = () => {
+  const { user } = useAuth();
+  
   const [debugData, setDebugData] = useState<{
     logs: LogItem[];
     lastSent: any;
@@ -54,6 +60,7 @@ const DashboardPage: React.FC = () => {
     registrationStatus: 'unknown',
     fcmToken: null,
     lastTokenUpdate: null,
+    messagingAvailable: false,
   });
   const [browserDiagnostics, setBrowserDiagnostics] = useState<any>({});
   const [filterType, setFilterType] = useState<LogType | 'ALL'>('ALL');
@@ -63,7 +70,6 @@ const DashboardPage: React.FC = () => {
     const isBrowser = typeof window !== 'undefined' && typeof navigator !== 'undefined';
     const isNative = Capacitor.isNativePlatform();
     
-    // Update debug store
     let debugStore = {
       logs: [],
       lastSent: null,
@@ -72,11 +78,10 @@ const DashboardPage: React.FC = () => {
       lastApiCall: null,
     };
     if (isBrowser) {
-      debugStore = (window as any).__DEBUG_PUSH || debugStore;
+      debugStore = (window as any).__DEBUG_PUSH__ || debugStore;
     }
     setDebugData(debugStore);
 
-    // Capacitor Diagnostics
     setCapacitorDiagnostics({
       isNative: isNative,
       platform: Capacitor.getPlatform(),
@@ -84,7 +89,6 @@ const DashboardPage: React.FC = () => {
       plugins: isNative ? (Capacitor as any).Plugins : null,
     });
 
-    // Browser Diagnostics
     if (isBrowser) {
       const ua = String(window.navigator.userAgent || '');
       const standalone = (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches) || (window.navigator as any).standalone === true;
@@ -93,33 +97,25 @@ const DashboardPage: React.FC = () => {
         userAgent: ua,
         isStandalone: standalone,
         timestamp: new Date().toLocaleString('pt-BR'),
+        serviceWorker: 'serviceWorker' in navigator,
+        notification: 'Notification' in window,
+        notificationPermission: 'Notification' in window ? Notification.permission : 'N/A',
       });
     }
 
-    // Push Diagnostics
-    if (isNative) {
-      try {
-        const checkResult = await PushNotifications.checkPermissions();
-        setPushDiagnostics(prev => ({ ...prev, checkPermissionsResult: checkResult }));
-
-        const tokenFromStore = debugStore.fcmToken || null;
-        const lastTokenUpdate = debugStore.lastTokenUpdate || null;
-        
-        setPushDiagnostics(prev => ({ 
-          ...prev, 
-          fcmToken: tokenFromStore,
-          lastTokenUpdate: lastTokenUpdate,
-          registrationStatus: tokenFromStore ? 'registered' : 'not_registered'
-        }));
-      } catch (err) {
-        console.error('Error getting push diagnostics:', err);
-        setPushDiagnostics(prev => ({ 
-          ...prev, 
-          registrationStatus: 'error',
-          lastError: err 
-        }));
-      }
-    }
+    const messaging = getFirebaseMessaging();
+    
+    const currentToken = getCurrentFcmToken();
+    const checkResult = await checkPushPermissions();
+    
+    setPushDiagnostics(prev => ({ 
+      ...prev, 
+      fcmToken: currentToken || debugStore.fcmToken,
+      lastTokenUpdate: debugStore.lastTokenUpdate,
+      checkPermissionsResult: checkResult,
+      messagingAvailable: !!messaging,
+      registrationStatus: currentToken || debugStore.fcmToken ? 'registered' : 'not_registered'
+    }));
 
     setIsLoading(false);
   };
@@ -127,17 +123,55 @@ const DashboardPage: React.FC = () => {
   const requestPushPermissions = async () => {
     try {
       const isNative = Capacitor.isNativePlatform();
+      
+      if (user?.uid) {
+        await initializePushNotifications(user.uid);
+      } else {
+        await initializePushNotifications();
+      }
+
       if (isNative) {
-        const result = await PushNotifications.requestPermissions();
-        setPushDiagnostics(prev => ({ ...prev, requestPermissionsResult: result }));
-        
-        // Try to register
+        const reqResult = await PushNotifications.requestPermissions();
+        setPushDiagnostics(prev => ({ ...prev, requestPermissionsResult: reqResult }));
         await PushNotifications.register();
         Taro.showToast({ title: 'Registrando...', icon: 'none' });
+      } else {
+        if ('Notification' in window) {
+          const permission = await Notification.requestPermission();
+          setPushDiagnostics(prev => ({ 
+            ...prev, 
+            requestPermissionsResult: { receive: permission } 
+          }));
+          
+          if (user?.uid) {
+            await initializePushNotifications(user.uid);
+          }
+        }
       }
-    } catch (err) {
-      console.error('Error requesting permissions:', err);
-      Taro.showToast({ title: `Erro: ${(err as Error).message}`, icon: 'none' });
+
+      refreshDebugData();
+    } catch (error) {
+      console.error('Error requesting permissions:', error);
+      Taro.showToast({ title: `Erro: ${(error as Error).message}`, icon: 'none' });
+    }
+  };
+
+  const copyFcmToken = async () => {
+    const token = pushDiagnostics.fcmToken || getCurrentFcmToken();
+    if (!token) {
+      Taro.showToast({ title: 'Token FCM não encontrado', icon: 'none' });
+      return;
+    }
+    try {
+      const isBrowser = typeof navigator !== 'undefined' && 'clipboard' in navigator;
+      if (isBrowser) {
+        await navigator.clipboard.writeText(token);
+        Taro.showToast({ title: 'Token FCM copiado!', icon: 'success' });
+      } else {
+        Taro.showToast({ title: 'Não foi possível copiar o token', icon: 'none' });
+      }
+    } catch (error) {
+      Taro.showToast({ title: 'Erro ao copiar', icon: 'none' });
     }
   };
 
@@ -152,9 +186,9 @@ const DashboardPage: React.FC = () => {
   };
 
   const getEnvironmentColor = () => {
-    if (capacitorDiagnostics.isNative) return '#10b981'; // green
-    if (browserDiagnostics.isStandalone) return '#3b82f6'; // blue
-    return '#f59e0b'; // amber
+    if (capacitorDiagnostics.isNative) return '#10b981';
+    if (browserDiagnostics.isStandalone) return '#3b82f6';
+    return '#f59e0b';
   };
 
   useEffect(() => {
@@ -199,7 +233,7 @@ const DashboardPage: React.FC = () => {
         }} />
         <Text style={{ fontSize: '11px', color: '#6b7280', marginBottom: '2px' }}>{label}</Text>
         <Text style={{ fontSize: '12px', fontWeight: 'bold', color: '#374151' }}>
-          {typeof status === 'boolean' ? (status ? 'OK' : 'FALHA') : status}
+          {typeof status === 'boolean' ? (status ? 'SIM' : 'NÃO') : status}
         </Text>
       </View>
     );
@@ -274,21 +308,16 @@ const DashboardPage: React.FC = () => {
     );
   };
 
-  const copyFcmToken = async () => {
-    if (!pushDiagnostics.fcmToken) {
-      Taro.showToast({ title: 'Token FCM não encontrado', icon: 'none' });
-      return;
-    }
+  const clearLogs = () => {
     try {
-      const isBrowser = typeof navigator !== 'undefined' && 'clipboard' in navigator;
+      const isBrowser = typeof window !== 'undefined';
       if (isBrowser) {
-        await navigator.clipboard.writeText(pushDiagnostics.fcmToken);
-        Taro.showToast({ title: 'Token FCM copiado!', icon: 'success' });
-      } else {
-        Taro.showToast({ title: 'Não foi possível copiar o token', icon: 'none' });
+        (window as any).__DEBUG_PUSH__ = { logs: [], lastSent: null, lastReceived: null, lastError: null, lastApiCall: null };
       }
-    } catch (error) {
-      Taro.showToast({ title: 'Erro ao copiar', icon: 'none' });
+      refreshDebugData();
+      Taro.showToast({ title: 'Logs limpos!', icon: 'success' });
+    } catch (e) {
+      Taro.showToast({ title: 'Erro ao limpar logs', icon: 'none' });
     }
   };
 
@@ -359,6 +388,12 @@ const DashboardPage: React.FC = () => {
             </Text>
           </View>
           
+          <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: '12px' }}>
+            <Badge label="Notification API" status={browserDiagnostics.notification} />
+            <Badge label="Service Worker" status={browserDiagnostics.serviceWorker} />
+            <Badge label="Permissão Notificação" status={browserDiagnostics.notificationPermission} />
+          </View>
+          
           <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
             <Text style={{ fontSize: '13px', color: '#6b7280' }}>window.location.href</Text>
           </View>
@@ -412,7 +447,7 @@ const DashboardPage: React.FC = () => {
             <Text style={{ fontSize: '13px', color: '#6b7280' }}>Token FCM</Text>
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: '8px' }}>
               <Text style={{ fontSize: '13px', color: '#374151', fontFamily: 'monospace' }} selectable>
-                {pushDiagnostics.fcmToken ? `${pushDiagnostics.fcmToken.substring(0, 12)}...` : (capacitorDiagnostics.isNative ? 'Não registrado' : 'Web - Não aplicável')}
+                {pushDiagnostics.fcmToken ? `${pushDiagnostics.fcmToken.substring(0, 12)}...` : 'Não registrado'}
               </Text>
               {pushDiagnostics.fcmToken && <Button onClick={copyFcmToken} style={{ padding: '4px 8px', fontSize: '11px', backgroundColor: '#e0e7ff', color: '#4338ca', border: 'none', borderRadius: '6px' }}>📋</Button>}
             </View>
@@ -426,6 +461,17 @@ const DashboardPage: React.FC = () => {
               </Text>
             </View>
           )}
+          
+          <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+            <Text style={{ fontSize: '13px', color: '#6b7280' }}>Firebase Messaging</Text>
+            <Text style={{ 
+              fontSize: '13px', 
+              fontWeight: 'bold',
+              color: pushDiagnostics.messagingAvailable ? '#10b981' : '#ef4444'
+            }}>
+              {pushDiagnostics.messagingAvailable ? 'DISPONÍVEL' : 'INDISPONÍVEL'}
+            </Text>
+          </View>
 
           {pushDiagnostics.checkPermissionsResult && <JsonPreview data={pushDiagnostics.checkPermissionsResult} label="PushNotifications.checkPermissions()" />}
           {pushDiagnostics.requestPermissionsResult && <JsonPreview data={pushDiagnostics.requestPermissionsResult} label="PushNotifications.requestPermissions()" />}
@@ -489,8 +535,43 @@ const DashboardPage: React.FC = () => {
             <ActionButton onClick={requestPushPermissions} variant="primary">🔑 Permissões Push</ActionButton>
             <ActionButton onClick={refreshDebugData}>🔄 Atualizar Diagnósticos</ActionButton>
           </View>
+          <View style={{ flexDirection: 'row', gap: '10px' }}>
+            <ActionButton onClick={clearLogs}>🗑️ Limpar Logs</ActionButton>
+          </View>
         </View>
       </Card>
+
+      {debugData.lastReceived && (
+        <Card title="Última Notificação Recebida" icon="📥">
+          <View style={{ 
+            backgroundColor: '#f0fdf4', 
+            border: '1px solid #bbf7d0', 
+            borderRadius: '10px', 
+            padding: '14px' 
+          }}>
+            <Text style={{ fontSize: '12px', color: '#6b7280', marginBottom: '8px' }}>Payload:</Text>
+            <Text style={{ fontSize: '11px', color: '#166534', fontFamily: 'monospace', wordBreak: 'break-all' }} selectable>
+              {typeof debugData.lastReceived === 'object' ? JSON.stringify(debugData.lastReceived, null, 2) : String(debugData.lastReceived)}
+            </Text>
+          </View>
+        </Card>
+      )}
+
+      {debugData.lastError && (
+        <Card title="Último Erro" icon="❌">
+          <View style={{ 
+            backgroundColor: '#fef2f2', 
+            border: '1px solid #fecaca', 
+            borderRadius: '10px', 
+            padding: '14px' 
+          }}>
+            <Text style={{ fontSize: '12px', color: '#6b7280', marginBottom: '8px' }}>Erro:</Text>
+            <Text style={{ fontSize: '11px', color: '#991b1b', fontFamily: 'monospace', wordBreak: 'break-all' }} selectable>
+              {typeof debugData.lastError === 'object' ? JSON.stringify(debugData.lastError, null, 2) : String(debugData.lastError)}
+            </Text>
+          </View>
+        </Card>
+      )}
 
       <Card title={`Logs (${filteredLogs.length})`} icon="📜">
         <View style={{ flexDirection: 'row', gap: '8px', marginBottom: '16px', flexWrap: 'wrap' }}>
@@ -520,22 +601,20 @@ const DashboardPage: React.FC = () => {
             </Text>
           ) : (
             filteredLogs.map((log, index) => {
-              const getLogTypeColor = (type: string) => {
-                const t = type.toUpperCase();
-                if (t.includes('ERROR')) return '#ef4444';
-                if (t.includes('WARN') || t.includes('AVISO')) return '#f59e0b';
-                if (t.includes('SUCCESS') || t.includes('SUCESSO')) return '#10b981';
+              const getLogColor = (t: string) => {
+                const type = t.toUpperCase();
+                if (type.includes('ERROR')) return '#ef4444';
+                if (type.includes('WARN') || type.includes('AVISO')) return '#f59e0b';
+                if (type.includes('SUCCESS') || type.includes('SUCESSO')) return '#10b981';
                 return '#3b82f6';
               };
-              
-              const logColor = getLogTypeColor(log.type);
-              
+
               return (
                 <View 
                   key={index} 
                   style={{ 
                     borderLeftWidth: '3px', 
-                    borderLeftColor: logColor,
+                    borderLeftColor: getLogColor(log.type), 
                     borderLeftStyle: 'solid',
                     padding: '12px 16px',
                     backgroundColor: '#f9fafb',
@@ -543,11 +622,7 @@ const DashboardPage: React.FC = () => {
                   }}
                 >
                   <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
-                    <Text style={{ 
-                      fontSize: '12px', 
-                      fontWeight: '700', 
-                      color: logColor
-                    }}>
+                    <Text style={{ fontSize: '12px', fontWeight: '700', color: getLogColor(log.type) }}>
                       [{log.type}]
                     </Text>
                     <Text style={{ fontSize: '10px', color: '#9ca3af' }}>

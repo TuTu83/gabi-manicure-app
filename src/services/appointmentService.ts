@@ -59,28 +59,38 @@ async function getAdminFcmToken(): Promise<string | null> {
   }
 }
 
-async function getUserFcmToken(userId: string): Promise<string | null> {
+async function getUserFcmTokens(userId: string): Promise<string[]> {
   try {
-    console.log('[getUserFcmToken] Starting for user:', userId);
+    console.log('[getUserFcmTokens] Starting for user:', userId);
     const db = getFirebaseDb();
     if (!db) {
-      console.error('[getUserFcmToken] Firebase DB not available');
-      return null;
+      console.error('[getUserFcmTokens] Firebase DB not available');
+      return [];
     }
     
     const userDoc = await getDoc(doc(db, 'users', userId));
     if (userDoc.exists()) {
-      const userData = userDoc.data() as UserProfile;
-      const token = userData.fcmToken || null;
-      console.log('[getUserFcmToken] User FCM token:', token ? 'found' : 'NOT FOUND');
-      console.log('[getUserFcmToken] User data:', userData);
-      return token;
+      const userData = userDoc.data() as UserProfile & { fcmTokens?: string[] };
+      const tokens: string[] = [];
+      if (userData.fcmTokens && Array.isArray(userData.fcmTokens)) {
+        userData.fcmTokens.forEach((token) => {
+          if (!tokens.includes(token)) {
+            tokens.push(token);
+          }
+        });
+      }
+      if (userData.fcmToken && !tokens.includes(userData.fcmToken)) {
+        tokens.push(userData.fcmToken);
+      }
+      console.log('[getUserFcmTokens] User FCM tokens found:', tokens.length, tokens.map(t => `${t.substring(0,10)}...`));
+      console.log('[getUserFcmTokens] User data:', userData);
+      return tokens;
     }
-    console.error('[getUserFcmToken] User not found:', userId);
-    return null;
+    console.error('[getUserFcmTokens] User not found:', userId);
+    return [];
   } catch (error) {
-    console.error('[getUserFcmToken] Error getting user FCM token:', error);
-    return null;
+    console.error('[getUserFcmTokens] Error getting user FCM tokens:', error);
+    return [];
   }
 }
 
@@ -425,13 +435,17 @@ export async function createAppointment(input: Omit<Appointment, 'id' | 'created
   console.log('[createAppointment] Preparing to send FCM notifications...');
   try {
     const adminFcmTokens = await getAdminFcmTokens();
-    const clientFcmToken = await getUserFcmToken(input.userId);
+    const clientFcmTokens = await getUserFcmTokens(input.userId);
     
     const dateStr = dayjs(startAt).format('DD/MM/YYYY');
     const timeStr = dayjs(startAt).format('HH:mm');
     
     const tokensToSend: string[] = [...adminFcmTokens];
-    if (clientFcmToken) tokensToSend.push(clientFcmToken);
+    clientFcmTokens.forEach(token => {
+      if (!tokensToSend.includes(token)) {
+        tokensToSend.push(token);
+      }
+    });
     
     console.log('[createAppointment] Tokens to send:', tokensToSend.map(t => `${t.substring(0,10)}...`));
     
@@ -499,13 +513,17 @@ export async function cancelAppointment(appointmentId: string): Promise<void> {
   if (appointmentData) {
     try {
       const adminFcmTokens = await getAdminFcmTokens();
-      const clientFcmToken = await getUserFcmToken(appointmentData.userId);
+      const clientFcmTokens = await getUserFcmTokens(appointmentData.userId);
       
       const dateStr = dayjs(appointmentData.startAt).format('DD/MM/YYYY');
       const timeStr = dayjs(appointmentData.startAt).format('HH:mm');
       
       const tokensToSend: string[] = [...adminFcmTokens];
-      if (clientFcmToken) tokensToSend.push(clientFcmToken);
+      clientFcmTokens.forEach(token => {
+        if (!tokensToSend.includes(token)) {
+          tokensToSend.push(token);
+        }
+      });
       
       console.log('[cancelAppointment] Tokens to send:', tokensToSend.map(t => `${t.substring(0,10)}...`));
       
@@ -759,13 +777,17 @@ export async function rescheduleAppointment(params: {
   if (appointmentData) {
     try {
       const adminFcmTokens = await getAdminFcmTokens();
-      const clientFcmToken = await getUserFcmToken(appointmentData.userId);
+      const clientFcmTokens = await getUserFcmTokens(appointmentData.userId);
       
       const dateStr = dayjs(startAt).format('DD/MM/YYYY');
       const timeStr = dayjs(startAt).format('HH:mm');
       
       const tokensToSend: string[] = [...adminFcmTokens];
-      if (clientFcmToken) tokensToSend.push(clientFcmToken);
+      clientFcmTokens.forEach(token => {
+        if (!tokensToSend.includes(token)) {
+          tokensToSend.push(token);
+        }
+      });
       
       console.log('[rescheduleAppointment] Tokens to send:', tokensToSend.map(t => `${t.substring(0,10)}...`));
       

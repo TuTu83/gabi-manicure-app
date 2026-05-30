@@ -1,6 +1,8 @@
+
 import { Capacitor } from '@capacitor/core';
 import { PushNotifications, PushNotificationSchema, ActionPerformed, Token } from '@capacitor/push-notifications';
 import { updateUserFcmToken } from './adminService';
+import { getFcmToken, onFcmMessage } from './firebase';
 import Taro from '@tarojs/taro';
 
 // Armazena o token FCM e os listeners para limpeza
@@ -9,6 +11,7 @@ let tokenListener: any = null;
 let errorListener: any = null;
 let notificationListener: any = null;
 let actionListener: any = null;
+let fcmMessageUnsubscribe: (() => void) | null = null;
 let isInitialized = false;
 let currentUserId: string | null = null;
 
@@ -22,11 +25,11 @@ const log = (message: string, data?: any) => {
   console.log(`${TAG} [${timestamp}] ${message}`, data || '');
   // Salva log no debug
   if (typeof window !== 'undefined') {
-    if (!(window as any).__DEBUG_PUSH) {
-      (window as any).__DEBUG_PUSH = { logs: [], lastSent: null, lastReceived: null, lastError: null };
+    if (!(window as any).__DEBUG_PUSH__) {
+      (window as any).__DEBUG_PUSH__ = { logs: [], lastSent: null, lastReceived: null, lastError: null, lastTokenUpdate: null };
     }
-    (window as any).__DEBUG_PUSH.logs = [
-      ...((window as any).__DEBUG_PUSH.logs || []),
+    (window as any).__DEBUG_PUSH__.logs = [
+      ...((window as any).__DEBUG_PUSH__.logs || []),
       { type: 'INFO', message, data, timestamp: Date.now() }
     ].slice(-100);
   }
@@ -37,14 +40,14 @@ const logError = (message: string, error?: any) => {
   console.error(`${TAG} [${timestamp}] ERRO: ${message}`, error || '');
   // Salva log no debug
   if (typeof window !== 'undefined') {
-    if (!(window as any).__DEBUG_PUSH) {
-      (window as any).__DEBUG_PUSH = { logs: [], lastSent: null, lastReceived: null, lastError: null };
+    if (!(window as any).__DEBUG_PUSH__) {
+      (window as any).__DEBUG_PUSH__ = { logs: [], lastSent: null, lastReceived: null, lastError: null, lastTokenUpdate: null };
     }
-    (window as any).__DEBUG_PUSH.logs = [
-      ...((window as any).__DEBUG_PUSH.logs || []),
+    (window as any).__DEBUG_PUSH__.logs = [
+      ...((window as any).__DEBUG_PUSH__.logs || []),
       { type: 'ERROR', message, data: error, timestamp: Date.now() }
     ].slice(-100);
-    (window as any).__DEBUG_PUSH.lastError = error;
+    (window as any).__DEBUG_PUSH__.lastError = error;
   }
 };
 
@@ -60,9 +63,11 @@ const saveTokenLocal = (token: string) => {
     logError('Erro ao salvar token local', e);
   }
   if (typeof window !== 'undefined') {
-    (window as any).__DEBUG_PUSH = (window as any).__DEBUG_PUSH || {};
-    (window as any).__DEBUG_PUSH.fcmToken = token;
+    (window as any).__DEBUG_PUSH__ = (window as any).__DEBUG_PUSH__ || { logs: [], lastSent: null, lastReceived: null, lastError: null, lastTokenUpdate: null };
+    (window as any).__DEBUG_PUSH__.fcmToken = token;
+    (window as any).__DEBUG_PUSH__.lastTokenUpdate = Date.now();
   }
+  currentToken = token;
 };
 
 // Recupera token do armazenamento local
@@ -80,7 +85,7 @@ const getTokenLocal = (): string | null => {
 };
 
 /**
- * Inicializa todo o sistema de push notifications
+ * Inicializa todo o sistema de push notifications (tanto nativo quanto web)
  */
 export const initializePushNotifications = async (userId?: string): Promise<void> => {
   if (userId) {
@@ -103,17 +108,26 @@ export const initializePushNotifications = async (userId?: string): Promise<void
     return;
   }
 
-  // Verifica se está em plataforma nativa
-  if (!Capacitor.isNativePlatform()) {
-    log('Plataforma não nativa, ignorando inicialização push');
-    return;
+  if (Capacitor.isNativePlatform()) {
+    // Plataforma nativa (Android/iOS)
+    log('Inicializando sistema de push notifications NATIVO');
+    await initializeNativePush(userId);
+  } else {
+    // Plataforma web/PWA
+    log('Inicializando sistema de push notifications WEB');
+    await initializeWebPush(userId);
   }
+  
+  isInitialized = true;
+};
 
-  log('Inicializando sistema de push notifications');
-
+/**
+ * Inicializa push notifications nativo (Capacitor)
+ */
+const initializeNativePush = async (userId?: string): Promise<void> => {
   try {
     // Passo 1: Adicionar listeners PRIMEIRO (evita perder eventos)
-    addListeners(userId);
+    addNativeListeners(userId);
 
     // Passo 2: Solicitar permissões
     log('Solicitando permissões de notificações');
@@ -133,24 +147,61 @@ export const initializePushNotifications = async (userId?: string): Promise<void
     // Passo 4: Registrar para receber tokens
     log('Registrando dispositivo para push notifications');
     await PushNotifications.register();
-
-    isInitialized = true;
-    log('Sistema de push inicializado com sucesso');
   } catch (error) {
-    logError('Falha ao inicializar push notifications', error);
+    logError('Falha ao inicializar push notifications nativo', error);
   }
 };
 
 /**
- * Adiciona todos os listeners de push notification
+ * Inicializa push notifications web (Firebase JS SDK)
  */
-const addListeners = (userId?: string) => {
+const initializeWebPush = async (userId?: string): Promise<void> => {
+  try {
+    // Verifica se temos Firebase Messaging
+    const messaging = getFirebaseMessaging();
+    if (!messaging) {
+      logError('Firebase Messaging não está disponível no navegador');
+      return;
+    }
+
+    // Adiciona listener para mensagens em primeiro plano
+    addWebListeners();
+
+    // Solicita permissão de notificações
+    if ('Notification' in window) {
+      const permission = await Notification.requestPermission();
+      if (permission === 'granted') {
+        log('Permissão de notificações concedida no navegador');
+        
+        // Obtém token FCM para Web
+        const webToken = await getFcmToken();
+        if (webToken) {
+          log('Token FCM Web obtido', { token: webToken.substring(0, 20) + '...' });
+          saveTokenLocal(webToken);
+          if (userId) {
+            await saveTokenToFirebase(webToken, userId);
+          }
+        } else {
+          logError('Não foi possível obter token FCM Web');
+        }
+      } else {
+        logError('Permissão de notificações negada no navegador');
+      }
+    }
+  } catch (error) {
+    logError('Falha ao inicializar push notifications web', error);
+  }
+};
+
+/**
+ * Adiciona listeners para push nativo (Capacitor)
+ */
+const addNativeListeners = (userId?: string) => {
   // Listener de token recebido
   tokenListener = PushNotifications.addListener(
     'registration',
     async (token: Token) => {
-      log('Token FCM recebido', { token: token.value.substring(0, 20) + '...' });
-      currentToken = token.value;
+      log('Token FCM recebido (nativo)', { token: token.value.substring(0, 20) + '...' });
       saveTokenLocal(token.value);
       if (userId || currentUserId) {
         await saveTokenToFirebase(token.value, userId || currentUserId!);
@@ -162,7 +213,7 @@ const addListeners = (userId?: string) => {
   errorListener = PushNotifications.addListener(
     'registrationError',
     (error: any) => {
-      logError('Erro no registro de push', error);
+      logError('Erro no registro de push (nativo)', error);
     }
   );
 
@@ -170,13 +221,13 @@ const addListeners = (userId?: string) => {
   notificationListener = PushNotifications.addListener(
     'pushNotificationReceived',
     async (notification: PushNotificationSchema) => {
-      log('Notificação recebida com app aberto', notification);
+      log('Notificação recebida com app aberto (nativo)', notification);
       if (typeof window !== 'undefined') {
-        (window as any).__DEBUG_PUSH = (window as any).__DEBUG_PUSH || {};
-        (window as any).__DEBUG_PUSH.lastReceived = notification;
+        (window as any).__DEBUG_PUSH__ = (window as any).__DEBUG_PUSH__ || { logs: [], lastSent: null, lastReceived: null, lastError: null, lastTokenUpdate: null };
+        (window as any).__DEBUG_PUSH__.lastReceived = notification;
       }
       
-      // Mostra a notificação como banner mesmo com som e som/vibração mesmo com app aberto
+      // Mostra a notificação como banner mesmo com app aberto
       try {
         await PushNotifications.localNotification({
           title: notification.title || 'Nova Notificação',
@@ -187,9 +238,9 @@ const addListeners = (userId?: string) => {
           channelId: ANDROID_CHANNEL_ID,
           data: notification.data
         });
-        log('Notificação local exibida');
+        log('Notificação local exibida (nativo)');
       } catch (localError) {
-        logError('Erro ao exibir notificação local', localError);
+        logError('Erro ao exibir notificação local (nativo)', localError);
       }
     }
   );
@@ -198,10 +249,32 @@ const addListeners = (userId?: string) => {
   actionListener = PushNotifications.addListener(
     'pushNotificationActionPerformed',
     (action: ActionPerformed) => {
-      log('Ação de notificação executada', action);
+      log('Ação de notificação executada (nativo)', action);
       handleNotificationAction(action);
     }
   );
+};
+
+/**
+ * Adiciona listeners para push web (Firebase)
+ */
+const addWebListeners = () => {
+  // Listener para mensagens em primeiro plano
+  fcmMessageUnsubscribe = onFcmMessage((payload: any) => {
+    log('Notificação recebida com app aberto (web)', payload);
+    if (typeof window !== 'undefined') {
+      (window as any).__DEBUG_PUSH__ = (window as any).__DEBUG_PUSH__ || { logs: [], lastSent: null, lastReceived: null, lastError: null, lastTokenUpdate: null };
+      (window as any).__DEBUG_PUSH__.lastReceived = payload;
+    }
+    
+    // Mostra notificação usando a API de notificações do navegador
+    if ('Notification' in window && Notification.permission === 'granted') {
+      new Notification(payload.notification?.title || 'Nova Notificação', {
+        body: payload.notification?.body || '',
+        icon: '/icon.png'
+      });
+    }
+  });
 };
 
 /**
@@ -231,7 +304,7 @@ const createAndroidChannel = async () => {
  */
 export const saveTokenToFirebase = async (token: string, userId: string) => {
   try {
-    log('Salvando token FCM no Firebase para usuário', { userId });
+    log('Salvando token FCM no Firebase para usuário', { userId, token: token.substring(0, 20) + '...' });
     await updateUserFcmToken(userId, token);
     log('Token FCM salvo com sucesso no Firebase');
   } catch (error) {
@@ -251,7 +324,7 @@ const handleNotificationAction = (action: ActionPerformed) => {
   // Aqui você pode adicionar navegação para telas específicas
   if (data?.appointmentId) {
     log('Navegando para agendamento', { appointmentId: data.appointmentId });
-    // Exemplo de navegação: import Taro from '@tarojs/taro'; Taro.navigateTo({ url: `/pages/booking/index?appointmentId=${data.appointmentId}` });
+    // Exemplo de navegação: import Taro from '@tarojs/taro'; Taro.navigateTo({ url: '/pages/booking/index?appointmentId=' + data.appointmentId });
   }
 };
 
@@ -264,6 +337,7 @@ export const cleanupPushListeners = () => {
   if (errorListener?.remove) errorListener.remove();
   if (notificationListener?.remove) notificationListener.remove();
   if (actionListener?.remove) actionListener.remove();
+  if (fcmMessageUnsubscribe) fcmMessageUnsubscribe();
   isInitialized = false;
 };
 
@@ -274,3 +348,24 @@ export const getCurrentFcmToken = (): string | null => {
   if (currentToken) return currentToken;
   return getTokenLocal();
 };
+
+/**
+ * Exibe permissões de notificações (para debug)
+ */
+export const checkPushPermissions = async (): Promise<any> => {
+  if (Capacitor.isNativePlatform()) {
+    try {
+      return await PushNotifications.checkPermissions();
+    } catch (e) {
+      logError('Erro ao verificar permissões nativas', e);
+      return null;
+    }
+  } else {
+    return { receive: 'Notification' in window ? Notification.permission : 'unsupported' };
+  }
+};
+
+/**
+ * Importações necessárias para evitar erros de referência
+ */
+import { getFirebaseMessaging } from './firebase';

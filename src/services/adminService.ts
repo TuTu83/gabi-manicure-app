@@ -295,7 +295,13 @@ export async function updateUserFcmToken(userId: string, fcmToken: string): Prom
   const db = getFirebaseDb();
   if (!db) return;
   try {
-    await updateDoc(doc(db, 'users', userId), { fcmToken, updatedAt: Date.now() });
+    // ArrayUnion para adicionar token sem duplicatas
+    await updateDoc(doc(db, 'users', userId), {
+      fcmTokens: (await import('firebase/firestore')).arrayUnion(fcmToken),
+      updatedAt: Date.now()
+    });
+    // Mantemos o campo fcmToken para retrocompatibilidade
+    await updateDoc(doc(db, 'users', userId), { fcmToken, updatedAt: Date.now() }, { merge: true });
     console.log('[Admin] Token FCM salvo com sucesso para usuário:', userId);
   } catch (error) {
     console.error('[Admin] falha ao salvar token FCM', error);
@@ -321,7 +327,15 @@ export async function getAdminFcmTokens(): Promise<string[]> {
     const tokens: string[] = [];
     snap.forEach(doc => {
       const data = doc.data() as any;
-      if (data.fcmToken) {
+      // Prioriza o array de tokens, mas mantém compatibilidade com campo único
+      if (data.fcmTokens && Array.isArray(data.fcmTokens)) {
+        data.fcmTokens.forEach((token: string) => {
+          if (!tokens.includes(token)) {
+            tokens.push(token);
+          }
+        });
+      }
+      if (data.fcmToken && !tokens.includes(data.fcmToken)) {
         tokens.push(data.fcmToken);
       }
     });
