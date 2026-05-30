@@ -1,120 +1,108 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import admin from 'firebase-admin';
 
-console.log(`[${new Date().toISOString()}] [API send-notification] Starting...`);
+console.log(`[${new Date().toISOString()}] [send-notification] Serverless function initialized`);
 
-// Initialize Firebase Admin SDK (only once)
-let firebaseAdminInitialized = false;
-let serviceAccountLoaded = false;
+// Initialize Firebase Admin (singleton)
+let firebaseReady = false;
 if (!admin.apps.length) {
-  console.log(`[${new Date().toISOString()}] [API send-notification] Initializing Firebase Admin...`);
-  const serviceAccountBase64 = process.env.FIREBASE_SERVICE_ACCOUNT_BASE64 || '';
-  console.log(`[${new Date().toISOString()}] [API send-notification] FIREBASE_SERVICE_ACCOUNT_BASE64 exists:`, !!serviceAccountBase64);
-  
-  if (serviceAccountBase64) {
-    try {
+  try {
+    const serviceAccountBase64 = process.env.FIREBASE_SERVICE_ACCOUNT_BASE64;
+    if (serviceAccountBase64) {
       const serviceAccount = JSON.parse(
         Buffer.from(serviceAccountBase64, 'base64').toString('utf-8')
       );
-      serviceAccountLoaded = true;
-      console.log(`[${new Date().toISOString()}] [API send-notification] Service account parsed successfully`);
-      
       admin.initializeApp({
         credential: admin.credential.cert(serviceAccount)
       });
-      firebaseAdminInitialized = true;
-      console.log(`[${new Date().toISOString()}] [API send-notification] Firebase Admin initialized ✅`);
-    } catch (initError) {
-      console.error(`[${new Date().toISOString()}] [API send-notification] Error initializing Firebase Admin:`, initError);
+      firebaseReady = true;
+      console.log(`[${new Date().toISOString()}] [send-notification] Firebase Admin initialized successfully`);
+    } else {
+      console.error(`[${new Date().toISOString()}] [send-notification] FIREBASE_SERVICE_ACCOUNT_BASE64 is missing`);
     }
-  } else {
-    console.error(`[${new Date().toISOString()}] [API send-notification] FIREBASE_SERVICE_ACCOUNT_BASE64 is not set!`);
+  } catch (e) {
+    console.error(`[${new Date().toISOString()}] [send-notification] Firebase Admin init error:`, e);
   }
 } else {
-  firebaseAdminInitialized = true;
-  serviceAccountLoaded = true;
-  console.log(`[${new Date().toISOString()}] [API send-notification] Firebase Admin already initialized ✅`);
+  firebaseReady = true;
+  console.log(`[${new Date().toISOString()}] [send-notification] Firebase Admin already initialized`);
 }
 
-export default async function handler(request: VercelRequest, response: VercelResponse) {
-  console.log(`\n[${new Date().toISOString()}] [API send-notification] Received ${request.method} request`);
-  
-  // Only allow POST
-  if (request.method !== 'POST') {
-    console.log(`[${new Date().toISOString()}] [API send-notification] Method not allowed: ${request.method}`);
-    return response.status(405).json({ error: "Method not allowed. Use POST." });
+export default async function handler(req: VercelRequest, res: VercelResponse) {
+  console.log(`[${new Date().toISOString()}] [send-notification] Request received - Method: ${req.method}`);
+
+  // 1. Only allow POST
+  if (req.method !== 'POST') {
+    console.log(`[${new Date().toISOString()}] [send-notification] Method not allowed: ${req.method}`);
+    return res.status(405).json({
+      error: "Method not allowed. Use POST"
+    });
   }
 
   try {
-    const body = request.body;
-    console.log(`[${new Date().toISOString()}] [API send-notification] Request body received:`, JSON.stringify(body, null, 2));
-    
-    // Validate request body
-    const { title, body: messageBody, fcmTokens, data = {} } = body;
-    
+    // 2. Validate request body
+    const { title, body, fcmTokens } = req.body || {};
+
+    console.log(`[${new Date().toISOString()}] [send-notification] Payload received:`, {
+      title,
+      body: body?.substring?.(0, 50) + '...',
+      tokenCount: fcmTokens?.length
+    });
+
     if (!title || typeof title !== 'string') {
-      console.error(`[${new Date().toISOString()}] [API send-notification] Invalid title`);
-      return response.status(400).json({ error: "Title is required and must be a string" });
-    }
-    
-    if (!messageBody || typeof messageBody !== 'string') {
-      console.error(`[${new Date().toISOString()}] [API send-notification] Invalid body`);
-      return response.status(400).json({ error: "Body is required and must be a string" });
-    }
-    
-    if (!fcmTokens || !Array.isArray(fcmTokens) || fcmTokens.length === 0) {
-      console.error(`[${new Date().toISOString()}] [API send-notification] Invalid fcmTokens`);
-      return response.status(400).json({ error: "fcmTokens is required and must be a non-empty array of strings" });
-    }
-    
-    // Validate all tokens are strings
-    for (const token of fcmTokens) {
-      if (typeof token !== 'string') {
-        console.error(`[${new Date().toISOString()}] [API send-notification] Invalid token: ${token}`);
-        return response.status(400).json({ error: "All fcmTokens must be strings" });
-      }
-    }
-
-    console.log(`[${new Date().toISOString()}] [API send-notification] Valid request - Tokens: ${fcmTokens.length}`);
-
-    if (!firebaseAdminInitialized) {
-      console.error(`[${new Date().toISOString()}] [API send-notification] Firebase Admin not initialized`);
-      return response.status(500).json({ 
-        error: "Firebase Admin not initialized",
-        firebaseAdminInitialized,
-        serviceAccountLoaded
+      console.log(`[${new Date().toISOString()}] [send-notification] Invalid title`);
+      return res.status(400).json({
+        error: "Title is required and must be a string"
       });
     }
 
-    // Prepare FCM messages
+    if (!body || typeof body !== 'string') {
+      console.log(`[${new Date().toISOString()}] [send-notification] Invalid body`);
+      return res.status(400).json({
+        error: "Body is required and must be a string"
+      });
+    }
+
+    if (!fcmTokens || !Array.isArray(fcmTokens) || fcmTokens.length === 0) {
+      console.log(`[${new Date().toISOString()}] [send-notification] Invalid fcmTokens`);
+      return res.status(400).json({
+        error: "fcmTokens is required and must be a non-empty array of strings"
+      });
+    }
+
+    for (const token of fcmTokens) {
+      if (typeof token !== 'string') {
+        console.log(`[${new Date().toISOString()}] [send-notification] Invalid token type`);
+        return res.status(400).json({
+          error: "All fcmTokens must be strings"
+        });
+      }
+    }
+
+    // 3. Check if Firebase is ready
+    if (!firebaseReady) {
+      console.error(`[${new Date().toISOString()}] [send-notification] Firebase is not ready`);
+      return res.status(500).json({
+        error: "Internal server error - Firebase not initialized"
+      });
+    }
+
+    // 4. Prepare and send notifications
     const messages = fcmTokens.map((token: string) => ({
       token,
-      notification: {
-        title,
-        body: messageBody,
-      },
-      data: {
-        ...data,
-        click_action: 'FLUTTER_NOTIFICATION_CLICK',
-      },
+      notification: { title, body },
+      data: { click_action: 'FLUTTER_NOTIFICATION_CLICK' },
       webpush: {
-        headers: {
-          Urgency: 'high',
-        },
         notification: {
           title,
-          body: messageBody,
+          body,
           icon: '/icon.svg',
           badge: '/icon.svg',
           vibrate: [100, 50, 100],
           requireInteraction: true,
           tag: 'gabi_manicure_notification',
-          renotify: true,
-          data: {
-            ...data,
-            click_action: 'FLUTTER_NOTIFICATION_CLICK',
-          },
-        },
+          renotify: true
+        }
       },
       android: {
         priority: 'high' as const,
@@ -122,60 +110,39 @@ export default async function handler(request: VercelRequest, response: VercelRe
         notification: {
           channelId: 'gabi_manicure_channel_high_importance',
           sound: 'default',
-          defaultSound: true,
-          defaultVibrateTimings: true,
-          icon: '@mipmap/ic_launcher',
           tag: 'gabi_manicure_notification',
           color: '#e8558f',
-          clickAction: 'FLUTTER_NOTIFICATION_CLICK',
+          clickAction: 'FLUTTER_NOTIFICATION_CLICK'
         }
       },
       apns: {
         payload: {
           aps: {
             sound: 'default',
-            alert: {
-              title,
-              body: messageBody,
-            },
-            badge: 1,
+            alert: { title, body },
+            badge: 1
           }
         }
       }
     }));
 
-    console.log(`[${new Date().toISOString()}] [API send-notification] Sending ${messages.length} notifications...`);
-    const fcmResponse = await admin.messaging().sendEach(messages);
-    
-    console.log(`[${new Date().toISOString()}] [API send-notification] Sent! Success: ${fcmResponse.successCount}, Failed: ${fcmResponse.failureCount}`);
+    console.log(`[${new Date().toISOString()}] [send-notification] Sending ${messages.length} notifications...`);
+    const fcmResult = await admin.messaging().sendEach(messages);
 
-    // Return standard success response as required
-    return response.status(200).json({ 
-      success: true, 
-      sent: fcmResponse.successCount, 
-      message: "Notifications processed",
-      successCount: fcmResponse.successCount,
-      failureCount: fcmResponse.failureCount,
-      responses: fcmResponse.responses.map((r, i) => ({
-        tokenPrefix: fcmTokens[i].substring(0, 10),
-        success: r.success,
-        messageId: r.messageId,
-        error: r.error ? {
-          code: r.error.code,
-          message: r.error.message
-        } : null
-      })),
-      firebaseAdminInitialized,
-      serviceAccountLoaded,
-      totalTokens: fcmTokens.length
+    console.log(`[${new Date().toISOString()}] [send-notification] Notifications sent - Success: ${fcmResult.successCount}, Failed: ${fcmResult.failureCount}`);
+
+    // 5. Return success response (EXACT format as required)
+    return res.status(200).json({
+      success: true,
+      sent: fcmResult.successCount,
+      message: "Notifications processed successfully"
     });
+
   } catch (error) {
-    console.error(`[${new Date().toISOString()}] [API send-notification] Error:`, error);
-    return response.status(500).json({ 
+    console.error(`[${new Date().toISOString()}] [send-notification] Unhandled error:`, error);
+    return res.status(500).json({
       error: "Internal server error",
-      details: String(error),
-      firebaseAdminInitialized,
-      serviceAccountLoaded
+      details: error instanceof Error ? error.message : String(error)
     });
   }
 }
