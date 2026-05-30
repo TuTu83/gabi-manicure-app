@@ -13,7 +13,21 @@
     <title>Agendar Manicure Gabriele</title>
     <link rel="manifest" href="/manifest.webmanifest" />
     <!-- Capacitor Cordova bridge - required for native plugins -->
-    <script src="cordova.js"></script>
+    <script>
+      // Only load cordova.js if we're running on a native Capacitor platform
+      (function() {
+        const isCapacitor =
+          (typeof window !== 'undefined' && (window as any).Capacitor) ||
+          (typeof document !== 'undefined' && document.URL.startsWith('capacitor://')) ||
+          (typeof document !== 'undefined' && document.URL.startsWith('ionic://'));
+        if (isCapacitor) {
+          const script = document.createElement('script');
+          script.src = 'cordova.js';
+          script.async = true;
+          document.head.appendChild(script);
+        }
+      })();
+    </script>
     <script>
       // Fixa o fontSize do HTML para evitar alterações por scripts de layout
       (function() {
