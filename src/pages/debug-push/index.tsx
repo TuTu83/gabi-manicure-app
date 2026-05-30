@@ -2,6 +2,7 @@ import React, { useEffect, useState, useMemo } from 'react';
 import { View, Text, Button, ScrollView } from '@tarojs/components';
 import Taro from '@tarojs/taro';
 import { Capacitor } from '@capacitor/core';
+import { PushNotifications } from '@capacitor/push-notifications';
 
 type LogType = 'ERROR' | 'WARN' | 'INFO' | 'SUCCESS';
 
@@ -10,6 +11,21 @@ interface LogItem {
   message: string;
   data?: any;
   timestamp: number;
+}
+
+interface CapacitorDiagnostics {
+  isNative: boolean;
+  platform: string;
+  windowCapacitor: any;
+  plugins: any;
+}
+
+interface PushDiagnostics {
+  checkPermissionsResult: any;
+  requestPermissionsResult: any;
+  registrationStatus: 'unknown' | 'registered' | 'not_registered' | 'error';
+  fcmToken: string | null;
+  lastTokenUpdate: number | null;
 }
 
 const DashboardPage: React.FC = () => {
@@ -26,14 +42,28 @@ const DashboardPage: React.FC = () => {
     lastError: null,
     lastApiCall: null,
   });
-  const [diagnostics, setDiagnostics] = useState<any>({});
-  const [fcmToken, setFcmToken] = useState<string | null>(null);
+  const [capacitorDiagnostics, setCapacitorDiagnostics] = useState<CapacitorDiagnostics>({
+    isNative: false,
+    platform: '',
+    windowCapacitor: null,
+    plugins: null,
+  });
+  const [pushDiagnostics, setPushDiagnostics] = useState<PushDiagnostics>({
+    checkPermissionsResult: null,
+    requestPermissionsResult: null,
+    registrationStatus: 'unknown',
+    fcmToken: null,
+    lastTokenUpdate: null,
+  });
+  const [browserDiagnostics, setBrowserDiagnostics] = useState<any>({});
   const [filterType, setFilterType] = useState<LogType | 'ALL'>('ALL');
+  const [isLoading, setIsLoading] = useState(true);
 
-  const refreshDebugData = () => {
+  const refreshDebugData = async () => {
     const isBrowser = typeof window !== 'undefined' && typeof navigator !== 'undefined';
     const isNative = Capacitor.isNativePlatform();
     
+    // Update debug store
     let debugStore = {
       logs: [],
       lastSent: null,
@@ -41,46 +71,95 @@ const DashboardPage: React.FC = () => {
       lastError: null,
       lastApiCall: null,
     };
-
     if (isBrowser) {
       debugStore = (window as any).__DEBUG_PUSH || debugStore;
     }
     setDebugData(debugStore);
 
-    const getDiagnostics = async () => {
-      if (!isBrowser) return;
+    // Capacitor Diagnostics
+    setCapacitorDiagnostics({
+      isNative: isNative,
+      platform: Capacitor.getPlatform(),
+      windowCapacitor: isBrowser ? (window as any).Capacitor : null,
+      plugins: isNative ? (Capacitor as any).Plugins : null,
+    });
+
+    // Browser Diagnostics
+    if (isBrowser) {
       const ua = String(window.navigator.userAgent || '');
       const standalone = (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches) || (window.navigator as any).standalone === true;
-      const isAndroid = /Android/i.test(ua);
-      
-      const diag = {
+      setBrowserDiagnostics({
+        href: window.location.href,
+        userAgent: ua,
+        isStandalone: standalone,
         timestamp: new Date().toLocaleString('pt-BR'),
-        serviceWorkerSupported: 'serviceWorker' in navigator,
-        visibilityState: typeof document !== 'undefined' ? document.visibilityState : 'N/A',
-        standalone,
-        isAndroid,
-        isNative,
-      };
-      
-      setDiagnostics(diag);
-      
-      if (!isNative) {
-        setFcmToken('Disponível apenas no app nativo Android');
-      } else {
-        // Tentar obter o token salvo no store
-        const token = (window as any).__DEBUG_PUSH?.fcmToken;
-        if (token) {
-          setFcmToken(token);
-        }
+      });
+    }
+
+    // Push Diagnostics
+    if (isNative) {
+      try {
+        const checkResult = await PushNotifications.checkPermissions();
+        setPushDiagnostics(prev => ({ ...prev, checkPermissionsResult: checkResult }));
+
+        const tokenFromStore = debugStore.fcmToken || null;
+        const lastTokenUpdate = debugStore.lastTokenUpdate || null;
+        
+        setPushDiagnostics(prev => ({ 
+          ...prev, 
+          fcmToken: tokenFromStore,
+          lastTokenUpdate: lastTokenUpdate,
+          registrationStatus: tokenFromStore ? 'registered' : 'not_registered'
+        }));
+      } catch (err) {
+        console.error('Error getting push diagnostics:', err);
+        setPushDiagnostics(prev => ({ 
+          ...prev, 
+          registrationStatus: 'error',
+          lastError: err 
+        }));
       }
-    };
-    
-    getDiagnostics();
+    }
+
+    setIsLoading(false);
+  };
+
+  const requestPushPermissions = async () => {
+    try {
+      const isNative = Capacitor.isNativePlatform();
+      if (isNative) {
+        const result = await PushNotifications.requestPermissions();
+        setPushDiagnostics(prev => ({ ...prev, requestPermissionsResult: result }));
+        
+        // Try to register
+        await PushNotifications.register();
+        Taro.showToast({ title: 'Registrando...', icon: 'none' });
+      }
+    } catch (err) {
+      console.error('Error requesting permissions:', err);
+      Taro.showToast({ title: `Erro: ${(err as Error).message}`, icon: 'none' });
+    }
+  };
+
+  const getEnvironmentLabel = () => {
+    if (capacitorDiagnostics.isNative) {
+      return 'APK NATIVO';
+    }
+    if (browserDiagnostics.isStandalone) {
+      return 'PWA';
+    }
+    return 'NAVEGADOR WEB';
+  };
+
+  const getEnvironmentColor = () => {
+    if (capacitorDiagnostics.isNative) return '#10b981'; // green
+    if (browserDiagnostics.isStandalone) return '#3b82f6'; // blue
+    return '#f59e0b'; // amber
   };
 
   useEffect(() => {
     refreshDebugData();
-    const interval = setInterval(refreshDebugData, 2500);
+    const interval = setInterval(refreshDebugData, 3000);
     return () => clearInterval(interval);
   }, []);
 
@@ -98,143 +177,8 @@ const DashboardPage: React.FC = () => {
     return logs;
   }, [debugData.logs, filterType]);
 
-  const getBadgeColor = (status: string | boolean | undefined) => {
-    if (typeof status === 'boolean') return status ? '#10b981' : '#ef4444';
-    const s = (status || '').toLowerCase();
-    if (s === 'granted' || s === 'ok' || s === 'sim' || s === 'true') return '#10b981';
-    if (s === 'denied' || s === 'false') return '#ef4444';
-    if (s === 'default' || s === 'não') return '#f59e0b';
-    return '#6b7280';
-  };
-
-  const getBadgeText = (status: string | boolean | undefined, trueText = 'OK', falseText = 'FALHA') => {
-    if (typeof status === 'boolean') return status ? trueText : falseText;
-    if (!status) return 'N/A';
-    const s = status.toLowerCase();
-    if (s === 'granted') return 'Permitido';
-    if (s === 'denied') return 'Negado';
-    if (s === 'default') return 'Padrão';
-    return status;
-  };
-
-  const getLogTypeColor = (type: string) => {
-    const t = type.toUpperCase();
-    if (t.includes('ERROR')) return '#ef4444';
-    if (t.includes('WARN') || t.includes('AVISO')) return '#f59e0b';
-    if (t.includes('SUCCESS') || t.includes('SUCESSO')) return '#10b981';
-    return '#3b82f6';
-  };
-
-  const testLocalNotification = async () => {
-    try {
-      Taro.showToast({ title: 'Use FCM para testar', icon: 'none' });
-    } catch (error) {
-      Taro.showToast({ title: `Erro: ${(error as Error).message}`, icon: 'none' });
-    }
-  };
-
-  const requestNotificationPermission = async () => {
-    try {
-      const isBrowser = typeof window !== 'undefined';
-      if (isBrowser) {
-        const isNative = !!(window as any).Capacitor?.isNative;
-        if (isNative) {
-          Taro.showToast({ title: 'Permissão já solicitada', icon: 'none' });
-        } else {
-          Taro.showToast({ title: 'Notificações web não suportadas', icon: 'none' });
-        }
-      } else {
-        Taro.showToast({ title: 'Permissão já solicitada', icon: 'none' });
-      }
-    } catch (error) {
-      Taro.showToast({ title: `Erro: ${(error as Error).message}`, icon: 'none' });
-    }
-  };
-
-  const testCloudPush = async () => {
-    try {
-      Taro.showToast({ title: 'Use Firebase Console para enviar', icon: 'none' });
-    } catch (error) {
-      Taro.showToast({ title: `Erro: ${(error as Error).message}`, icon: 'none' });
-    }
-  };
-
-  const reloadServiceWorker = async () => {
-    try {
-      Taro.showToast({ title: 'Service Workers não usados', icon: 'none' });
-    } catch (error) {
-      Taro.showToast({ title: `Erro: ${(error as Error).message}`, icon: 'none' });
-    }
-  };
-
-  const resetOneSignal = async () => {
-    try {
-      Taro.showToast({ title: 'OneSignal não usado', icon: 'none' });
-    } catch (error) {
-      Taro.showToast({ title: `Erro: ${(error as Error).message}`, icon: 'none' });
-    }
-  };
-
-  const copyFcmToken = async () => {
-    if (!fcmToken) {
-      Taro.showToast({ title: 'Token FCM não encontrado', icon: 'none' });
-      return;
-    }
-    try {
-      const isBrowser = typeof navigator !== 'undefined' && 'clipboard' in navigator;
-      if (isBrowser) {
-        await navigator.clipboard.writeText(fcmToken);
-        Taro.showToast({ title: 'Token FCM copiado!', icon: 'success' });
-      } else {
-        Taro.showToast({ title: 'Não foi possível copiar o token', icon: 'none' });
-      }
-    } catch (error) {
-      Taro.showToast({ title: 'Erro ao copiar', icon: 'none' });
-    }
-  };
-
-  const testVibration = () => {
-    const isBrowser = typeof navigator !== 'undefined';
-    if (isBrowser && 'vibrate' in navigator) {
-      (navigator as any).vibrate([200, 100, 200, 100, 200]);
-      Taro.showToast({ title: 'Vibração ativada!', icon: 'success' });
-    } else {
-      Taro.showToast({ title: 'Vibração não suportada', icon: 'none' });
-    }
-  };
-
-  const testSound = () => {
-    try {
-      const isBrowser = typeof window !== 'undefined' && 'Audio' in window;
-      if (isBrowser) {
-        const audio = new (window as any).Audio('data:audio/wav;base64,UklGRigBAABXQVZFZm10IBAAAAABAAEARKwAAIhYAQACABAAAABkYXRhAgAAAAEA');
-        audio.play().catch((e) => {
-          Taro.showToast({ title: 'Erro ao tocar som', icon: 'none' });
-        });
-        Taro.showToast({ title: 'Tentando reproduzir som...', icon: 'none' });
-      } else {
-        Taro.showToast({ title: 'Som não suportado', icon: 'none' });
-      }
-    } catch (error) {
-      Taro.showToast({ title: 'Erro ao testar som', icon: 'none' });
-    }
-  };
-
-  const clearLogs = () => {
-    try {
-      const isBrowser = typeof window !== 'undefined';
-      if (isBrowser) {
-        (window as any).__DEBUG_PUSH = { logs: [], lastSent: null, lastReceived: null, lastError: null };
-      }
-      refreshDebugData();
-      Taro.showToast({ title: 'Logs limpos!', icon: 'success' });
-    } catch (e) {
-      Taro.showToast({ title: 'Erro ao limpar logs', icon: 'none' });
-    }
-  };
-
   const Badge = ({ label, status, color }: { label: string; status: string | boolean; color?: string }) => {
-    const badgeColor = color || getBadgeColor(status);
+    const badgeColor = color || (typeof status === 'boolean' ? (status ? '#10b981' : '#ef4444') : '#6b7280');
     return (
       <View style={{ 
         flexDirection: 'column', 
@@ -255,7 +199,7 @@ const DashboardPage: React.FC = () => {
         }} />
         <Text style={{ fontSize: '11px', color: '#6b7280', marginBottom: '2px' }}>{label}</Text>
         <Text style={{ fontSize: '12px', fontWeight: 'bold', color: '#374151' }}>
-          {getBadgeText(status)}
+          {typeof status === 'boolean' ? (status ? 'OK' : 'FALHA') : status}
         </Text>
       </View>
     );
@@ -311,59 +255,180 @@ const DashboardPage: React.FC = () => {
     );
   };
 
+  const JsonPreview = ({ data, label }: { data: any; label: string }) => {
+    return (
+      <View style={{ gap: '8px' }}>
+        <Text style={{ fontSize: '13px', color: '#6b7280' }}>{label}</Text>
+        <Text style={{ 
+          fontSize: '11px', 
+          color: '#374151', 
+          fontFamily: 'monospace', 
+          wordBreak: 'break-all',
+          backgroundColor: '#f3f4f6',
+          padding: '12px',
+          borderRadius: '8px'
+        }} selectable>
+          {typeof data === 'object' ? JSON.stringify(data, null, 2) : String(data)}
+        </Text>
+      </View>
+    );
+  };
+
+  const copyFcmToken = async () => {
+    if (!pushDiagnostics.fcmToken) {
+      Taro.showToast({ title: 'Token FCM não encontrado', icon: 'none' });
+      return;
+    }
+    try {
+      const isBrowser = typeof navigator !== 'undefined' && 'clipboard' in navigator;
+      if (isBrowser) {
+        await navigator.clipboard.writeText(pushDiagnostics.fcmToken);
+        Taro.showToast({ title: 'Token FCM copiado!', icon: 'success' });
+      } else {
+        Taro.showToast({ title: 'Não foi possível copiar o token', icon: 'none' });
+      }
+    } catch (error) {
+      Taro.showToast({ title: 'Erro ao copiar', icon: 'none' });
+    }
+  };
+
+  if (isLoading) {
+    return (
+      <View style={{ flex: 1, padding: '20px', justifyContent: 'center', alignItems: 'center' }}>
+        <Text style={{ fontSize: '16px', color: '#6b7280' }}>Carregando diagnósticos...</Text>
+      </View>
+    );
+  }
+
   return (
     <ScrollView style={{ flex: 1, padding: '16px', backgroundColor: '#f8fafc' }}>
       <View style={{ marginBottom: '24px' }}>
         <Text style={{ fontSize: '24px', fontWeight: '800', color: '#111827', marginBottom: '4px' }}>
-          📊 Dashboard de Notificações
+          📊 Dashboard de Diagnóstico
         </Text>
         <Text style={{ fontSize: '14px', color: '#6b7280' }}>
-          Gabi Manicure - Capacitor FCM Push
+          Gabi Manicure - Diagnóstico Completo
         </Text>
-        {!diagnostics?.isNative && (
-          <View style={{
-            marginTop: '16px',
-            padding: '16px',
-            backgroundColor: '#fef3c7',
-            border: '1px solid #f59e0b',
-            borderRadius: '12px'
-          }}>
-            <Text style={{ fontSize: '14px', fontWeight: '700', color: '#92400e' }}>
-              ⚠️ Aviso Importante
-            </Text>
-            <Text style={{ fontSize: '13px', color: '#78350f', marginTop: '8px' }}>
-              Notificações push FCM só funcionam no APP NATIVO Android (instalado via Android Studio), NÃO no app web/PWA!
-            </Text>
-          </View>
-        )}
+        <View style={{
+          marginTop: '16px',
+          padding: '16px',
+          backgroundColor: `${getEnvironmentColor()}15`,
+          border: `1px solid ${getEnvironmentColor()}`,
+          borderRadius: '12px'
+        }}>
+          <Text style={{ fontSize: '14px', fontWeight: '700', color: getEnvironmentColor() }}>
+            📱 {getEnvironmentLabel()}
+          </Text>
+        </View>
       </View>
 
-      <Card title="Status do Sistema" icon="🖥️">
-        <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: '12px' }}>
-          <Badge label="App Nativo" status={diagnostics.isNative} />
-          <Badge label="Android" status={diagnostics.isAndroid} />
-          <Badge label="PWA" status={diagnostics.standalone} />
+      <Card title="Diagnóstico Capacitor" icon="⚡">
+        <View style={{ gap: '12px' }}>
+          <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+            <Text style={{ fontSize: '13px', color: '#6b7280' }}>Capacitor.isNativePlatform()</Text>
+            <Text style={{ 
+              fontSize: '13px', 
+              fontWeight: 'bold',
+              color: capacitorDiagnostics.isNative ? '#10b981' : '#f59e0b'
+            }}>
+              {String(capacitorDiagnostics.isNative)}
+            </Text>
+          </View>
+
+          <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+            <Text style={{ fontSize: '13px', color: '#6b7280' }}>Capacitor.getPlatform()</Text>
+            <Text style={{ fontSize: '13px', fontWeight: 'bold', color: '#374151', fontFamily: 'monospace' }}>
+              "{capacitorDiagnostics.platform}"
+            </Text>
+          </View>
+
+          {capacitorDiagnostics.windowCapacitor && <JsonPreview data={capacitorDiagnostics.windowCapacitor} label="window.Capacitor (simplificado)" />}
         </View>
       </Card>
 
-      <Card title="Dispositivo e Push Info" icon="📱">
+      <Card title="Diagnóstico do Navegador" icon="🌐">
         <View style={{ gap: '12px' }}>
+          <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+            <Text style={{ fontSize: '13px', color: '#6b7280' }}>Modo Standalone (PWA)</Text>
+            <Text style={{ 
+              fontSize: '13px', 
+              fontWeight: 'bold',
+              color: browserDiagnostics.isStandalone ? '#3b82f6' : '#6b7280'
+            }}>
+              {browserDiagnostics.isStandalone ? 'SIM' : 'NÃO'}
+            </Text>
+          </View>
+          
+          <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+            <Text style={{ fontSize: '13px', color: '#6b7280' }}>window.location.href</Text>
+          </View>
+          <Text style={{ 
+            fontSize: '11px', 
+            color: '#374151', 
+            fontFamily: 'monospace', 
+            wordBreak: 'break-all',
+            backgroundColor: '#f3f4f6',
+            padding: '12px',
+            borderRadius: '8px'
+          }} selectable>
+            {browserDiagnostics.href}
+          </Text>
+          
+          <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+            <Text style={{ fontSize: '13px', color: '#6b7280' }}>navigator.userAgent</Text>
+          </View>
+          <Text style={{ 
+            fontSize: '11px', 
+            color: '#374151', 
+            fontFamily: 'monospace', 
+            wordBreak: 'break-all',
+            backgroundColor: '#f3f4f6',
+            padding: '12px',
+            borderRadius: '8px'
+          }} selectable>
+            {browserDiagnostics.userAgent}
+          </Text>
+        </View>
+      </Card>
+
+      <Card title="Diagnóstico Push Notifications" icon="🔔">
+        <View style={{ gap: '12px' }}>
+          <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+            <Text style={{ fontSize: '13px', color: '#6b7280' }}>Status Registro</Text>
+            <Text style={{ 
+              fontSize: '13px', 
+              fontWeight: 'bold',
+              color: pushDiagnostics.registrationStatus === 'registered' 
+                ? '#10b981' 
+                : pushDiagnostics.registrationStatus === 'error' 
+                ? '#ef4444' 
+                : '#f59e0b'
+            }}>
+              {pushDiagnostics.registrationStatus.toUpperCase()}
+            </Text>
+          </View>
+
           <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
             <Text style={{ fontSize: '13px', color: '#6b7280' }}>Token FCM</Text>
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: '8px' }}>
               <Text style={{ fontSize: '13px', color: '#374151', fontFamily: 'monospace' }} selectable>
-                {fcmToken || 'Não aplicável (web)'}
+                {pushDiagnostics.fcmToken ? `${pushDiagnostics.fcmToken.substring(0, 12)}...` : (capacitorDiagnostics.isNative ? 'Não registrado' : 'Web - Não aplicável')}
               </Text>
-              {fcmToken && fcmToken !== 'Disponível apenas no app nativo Android' && <Button onClick={copyFcmToken} style={{ padding: '4px 8px', fontSize: '11px', backgroundColor: '#e0e7ff', color: '#4338ca', border: 'none', borderRadius: '6px' }}>📋</Button>}
+              {pushDiagnostics.fcmToken && <Button onClick={copyFcmToken} style={{ padding: '4px 8px', fontSize: '11px', backgroundColor: '#e0e7ff', color: '#4338ca', border: 'none', borderRadius: '6px' }}>📋</Button>}
             </View>
           </View>
-          
-          <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
-            <Text style={{ fontSize: '13px', color: '#6b7280' }}>Atualizado em</Text>
-            <Text style={{ fontSize: '13px', color: '#374151', fontWeight: '500' }}>
-              {diagnostics.timestamp}
-            </Text>
-          </View>
+
+          {pushDiagnostics.lastTokenUpdate && (
+            <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+              <Text style={{ fontSize: '13px', color: '#6b7280' }}>Última atualização token</Text>
+              <Text style={{ fontSize: '13px', color: '#374151', fontWeight: '500' }}>
+                {new Date(pushDiagnostics.lastTokenUpdate).toLocaleString('pt-BR')}
+              </Text>
+            </View>
+          )}
+
+          {pushDiagnostics.checkPermissionsResult && <JsonPreview data={pushDiagnostics.checkPermissionsResult} label="PushNotifications.checkPermissions()" />}
+          {pushDiagnostics.requestPermissionsResult && <JsonPreview data={pushDiagnostics.requestPermissionsResult} label="PushNotifications.requestPermissions()" />}
         </View>
       </Card>
 
@@ -412,39 +477,8 @@ const DashboardPage: React.FC = () => {
               </Text>
             </View>
             
-            {debugData.lastApiCall.response && (
-              <View style={{ gap: '8px' }}>
-                <Text style={{ fontSize: '13px', color: '#6b7280' }}>Resposta</Text>
-                <Text style={{ 
-                  fontSize: '11px', 
-                  color: '#166534', 
-                  fontFamily: 'monospace', 
-                  wordBreak: 'break-all',
-                  backgroundColor: '#f0fdf4',
-                  padding: '12px',
-                  borderRadius: '8px'
-                }} selectable>
-                  {JSON.stringify(debugData.lastApiCall.response, null, 2)}
-                </Text>
-              </View>
-            )}
-            
-            {debugData.lastApiCall.error && (
-              <View style={{ gap: '8px' }}>
-                <Text style={{ fontSize: '13px', color: '#6b7280' }}>Erro</Text>
-                <Text style={{ 
-                  fontSize: '11px', 
-                  color: '#991b1b', 
-                  fontFamily: 'monospace', 
-                  wordBreak: 'break-all',
-                  backgroundColor: '#fef2f2',
-                  padding: '12px',
-                  borderRadius: '8px'
-                }} selectable>
-                  {debugData.lastApiCall.error}
-                </Text>
-              </View>
-            )}
+            {debugData.lastApiCall.response && <JsonPreview data={debugData.lastApiCall.response} label="Resposta" />}
+            {debugData.lastApiCall.error && <JsonPreview data={debugData.lastApiCall.error} label="Erro" />}
           </View>
         </Card>
       )}
@@ -452,55 +486,11 @@ const DashboardPage: React.FC = () => {
       <Card title="Botões de Ação" icon="🧪">
         <View style={{ gap: '10px' }}>
           <View style={{ flexDirection: 'row', gap: '10px' }}>
-            <ActionButton onClick={requestNotificationPermission}>🔑 Permissão</ActionButton>
-            <ActionButton onClick={testLocalNotification}>🔔 Local</ActionButton>
-          </View>
-          <View style={{ flexDirection: 'row', gap: '10px' }}>
-            <ActionButton onClick={testCloudPush} variant="primary">🌐 Cloud FCM</ActionButton>
-            <ActionButton onClick={copyFcmToken}>📋 Copiar Token</ActionButton>
-          </View>
-          <View style={{ flexDirection: 'row', gap: '10px' }}>
-            <ActionButton onClick={testVibration}>🧪 Vibração</ActionButton>
-            <ActionButton onClick={testSound}>🔊 Som</ActionButton>
-          </View>
-          <View style={{ flexDirection: 'row', gap: '10px' }}>
-            <ActionButton onClick={reloadServiceWorker}>🔄 SW</ActionButton>
-            <ActionButton onClick={resetOneSignal}>🔁 Reset</ActionButton>
+            <ActionButton onClick={requestPushPermissions} variant="primary">🔑 Permissões Push</ActionButton>
+            <ActionButton onClick={refreshDebugData}>🔄 Atualizar Diagnósticos</ActionButton>
           </View>
         </View>
       </Card>
-
-      {debugData.lastReceived && (
-        <Card title="Última Notificação Recebida" icon="📥">
-          <View style={{ 
-            backgroundColor: '#f0fdf4', 
-            border: '1px solid #bbf7d0', 
-            borderRadius: '10px', 
-            padding: '14px' 
-          }}>
-            <Text style={{ fontSize: '12px', color: '#6b7280', marginBottom: '8px' }}>Payload:</Text>
-            <Text style={{ fontSize: '11px', color: '#166534', fontFamily: 'monospace', wordBreak: 'break-all' }} selectable>
-              {typeof debugData.lastReceived === 'object' ? JSON.stringify(debugData.lastReceived, null, 2) : String(debugData.lastReceived)}
-            </Text>
-          </View>
-        </Card>
-      )}
-
-      {debugData.lastError && (
-        <Card title="Último Erro" icon="❌">
-          <View style={{ 
-            backgroundColor: '#fef2f2', 
-            border: '1px solid #fecaca', 
-            borderRadius: '10px', 
-            padding: '14px' 
-          }}>
-            <Text style={{ fontSize: '12px', color: '#6b7280', marginBottom: '8px' }}>Erro:</Text>
-            <Text style={{ fontSize: '11px', color: '#991b1b', fontFamily: 'monospace', wordBreak: 'break-all' }} selectable>
-              {typeof debugData.lastError === 'object' ? JSON.stringify(debugData.lastError, null, 2) : String(debugData.lastError)}
-            </Text>
-          </View>
-        </Card>
-      )}
 
       <Card title={`Logs (${filteredLogs.length})`} icon="📜">
         <View style={{ flexDirection: 'row', gap: '8px', marginBottom: '16px', flexWrap: 'wrap' }}>
@@ -521,9 +511,6 @@ const DashboardPage: React.FC = () => {
               {type}
             </Button>
           ))}
-          <Button onClick={clearLogs} style={{ marginLeft: 'auto', padding: '6px 12px', borderRadius: '20px', fontSize: '11px', fontWeight: '600', backgroundColor: '#fef2f2', color: '#ef4444', border: 'none' }}>
-            Limpar
-          </Button>
         </View>
 
         <View style={{ gap: '12px' }}>
@@ -537,7 +524,13 @@ const DashboardPage: React.FC = () => {
                 key={index} 
                 style={{ 
                   borderLeftWidth: '3px', 
-                  borderLeftColor: getLogTypeColor(log.type), 
+                  borderLeftColor: (type: string) => {
+                    const t = type.toUpperCase();
+                    if (t.includes('ERROR')) return '#ef4444';
+                    if (t.includes('WARN') || t.includes('AVISO')) return '#f59e0b';
+                    if (t.includes('SUCCESS') || t.includes('SUCESSO')) return '#10b981';
+                    return '#3b82f6';
+                  }(log.type),
                   borderLeftStyle: 'solid',
                   padding: '12px 16px',
                   backgroundColor: '#f9fafb',
@@ -545,7 +538,17 @@ const DashboardPage: React.FC = () => {
                 }}
               >
                 <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
-                  <Text style={{ fontSize: '12px', fontWeight: '700', color: getLogTypeColor(log.type) }}>
+                  <Text style={{ 
+                    fontSize: '12px', 
+                    fontWeight: '700', 
+                    color: (type: string) => {
+                      const t = type.toUpperCase();
+                      if (t.includes('ERROR')) return '#ef4444';
+                      if (t.includes('WARN') || t.includes('AVISO')) return '#f59e0b';
+                      if (t.includes('SUCCESS') || t.includes('SUCESSO')) return '#10b981';
+                      return '#3b82f6';
+                    }(log.type)
+                  }}>
                     [{log.type}]
                   </Text>
                   <Text style={{ fontSize: '10px', color: '#9ca3af' }}>
