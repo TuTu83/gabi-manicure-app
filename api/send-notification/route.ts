@@ -6,6 +6,7 @@ console.log(`[${new Date().toISOString()}] [API send-notification] Starting...`)
 // Initialize Firebase Admin SDK (only once)
 let firebaseAdminInitialized = false;
 let serviceAccountLoaded = false;
+let db: FirebaseFirestore.Firestore | null = null;
 if (!admin.apps.length) {
   console.log(`[${new Date().toISOString()}] [API send-notification] Initializing Firebase Admin...`);
   // We need the service account JSON from environment variable
@@ -20,9 +21,10 @@ if (!admin.apps.length) {
       serviceAccountLoaded = true;
       console.log(`[${new Date().toISOString()}] [API send-notification] Service account parsed successfully`);
       
-      admin.initializeApp({
+      const app = admin.initializeApp({
         credential: admin.credential.cert(serviceAccount)
       });
+      db = admin.firestore(app);
       firebaseAdminInitialized = true;
       console.log(`[${new Date().toISOString()}] [API send-notification] Firebase Admin initialized ✅`);
     } catch (initError) {
@@ -34,7 +36,31 @@ if (!admin.apps.length) {
 } else {
   firebaseAdminInitialized = true;
   serviceAccountLoaded = true;
+  db = admin.firestore();
   console.log(`[${new Date().toISOString()}] [API send-notification] Firebase Admin already initialized ✅`);
+}
+
+// Função para pegar todos os tokens FCM dos usuários
+async function getAllUserFcmTokens(): Promise<string[]> {
+  if (!db) {
+    console.warn(`[${new Date().toISOString()}] [API send-notification] Firestore DB not available`);
+    return [];
+  }
+  try {
+    const usersSnapshot = await db.collection('users').get();
+    const tokens: string[] = [];
+    usersSnapshot.forEach(doc => {
+      const userData = doc.data();
+      if (userData.fcmToken) {
+        tokens.push(userData.fcmToken);
+      }
+    });
+    console.log(`[${new Date().toISOString()}] [API send-notification] Found ${tokens.length} user FCM tokens`);
+    return tokens;
+  } catch (error) {
+    console.error(`[${new Date().toISOString()}] [API send-notification] Error fetching user tokens:`, error);
+    return [];
+  }
 }
 
 export async function POST(request: NextRequest) {
@@ -43,9 +69,17 @@ export async function POST(request: NextRequest) {
     const body = await request.json();
     console.log(`[${new Date().toISOString()}] [API send-notification] Request body received:`, JSON.stringify(body, null, 2));
     
-    const { title, body: messageBody, fcmTokens, data = {} } = body;
+    const { title, body: messageBody, fcmTokens, sendToAll = false, data = {} } = body;
 
-    if (!fcmTokens || fcmTokens.length === 0) {
+    // Decide quais tokens usar: os fornecidos ou todos os usuários
+    let tokensToUse: string[] = [];
+    if (sendToAll) {
+      tokensToUse = await getAllUserFcmTokens();
+    } else {
+      tokensToUse = fcmTokens || [];
+    }
+
+    if (!tokensToUse || tokensToUse.length === 0) {
       console.error(`[${new Date().toISOString()}] [API send-notification] No FCM tokens provided ❌`);
       return NextResponse.json(
         { error: 'No FCM tokens provided' },
@@ -53,10 +87,10 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    console.log(`[${new Date().toISOString()}] [API send-notification] Tokens received (${fcmTokens.length}):`, fcmTokens.map((t: string) => `${t.substring(0, 10)}...`));
+    console.log(`[${new Date().toISOString()}] [API send-notification] Tokens to send (${tokensToUse.length}):`, tokensToUse.map((t: string) => `${t.substring(0, 10)}...`));
     console.log(`[${new Date().toISOString()}] [API send-notification] Preparing to send notifications...`);
 
-    const messages = fcmTokens.map((token: string) => ({
+    const messages = tokensToUse.map((token: string) => ({
       token,
       notification: {
         title,
@@ -111,7 +145,7 @@ export async function POST(request: NextRequest) {
     console.log(`[${new Date().toISOString()}] [API send-notification] Failure count:`, response.failureCount, '❌');
     console.log(`[${new Date().toISOString()}] [API send-notification] Individual results:`, 
       response.responses.map((r, i) => ({
-        tokenPrefix: fcmTokens[i].substring(0,10),
+        tokenPrefix: tokensToUse[i].substring(0,10),
         success: r.success,
         messageId: r.messageId,
         error: r.error ? {
@@ -126,7 +160,7 @@ export async function POST(request: NextRequest) {
       successCount: response.successCount, 
       failureCount: response.failureCount,
       responses: response.responses.map((r, i) => ({
-        tokenPrefix: fcmTokens[i].substring(0,10),
+        tokenPrefix: tokensToUse[i].substring(0,10),
         success: r.success,
         messageId: r.messageId,
         error: r.error ? {
@@ -135,13 +169,14 @@ export async function POST(request: NextRequest) {
         } : null
       })),
       firebaseAdminInitialized,
-      serviceAccountLoaded
+      serviceAccountLoaded,
+      totalTokens: tokensToUse.length
     });
   } catch (error) {
     console.error(`[${new Date().toISOString()}] [API send-notification] Error sending notification:`, error);
     return NextResponse.json(
       { 
-        error: 'Internal server error', 
+        error: 'Internal server error',
         details: String(error),
         stack: error instanceof Error ? error.stack : undefined,
         firebaseAdminInitialized,
