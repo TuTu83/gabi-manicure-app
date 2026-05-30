@@ -439,7 +439,7 @@ export async function createAppointment(input: Omit<Appointment, 'id' | 'created
       console.log('[createAppointment] Calling sendFcmNotification...');
       await sendFcmNotification({
         title: 'Novo Agendamento!',
-        body: `${input.clientName} agendou para ${dateStr} às ${timeStr}`,
+        body: `${input.clientName || 'Cliente'} agendou para ${dateStr} às ${timeStr}`,
         fcmTokens: tokensToSend,
         data: {
           type: 'new_appointment',
@@ -513,7 +513,7 @@ export async function cancelAppointment(appointmentId: string): Promise<void> {
         console.log('[cancelAppointment] Calling sendFcmNotification...');
         await sendFcmNotification({
           title: 'Agendamento Cancelado',
-          body: `${appointmentData.clientName} cancelou o agendamento de ${dateStr} às ${timeStr}`,
+          body: `${appointmentData.clientName || 'Cliente'} cancelou o agendamento de ${dateStr} às ${timeStr}`,
           fcmTokens: tokensToSend,
           data: {
             type: 'appointment_cancelled',
