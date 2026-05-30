@@ -137,10 +137,11 @@ export async function POST(request: NextRequest) {
       }, { status: 500 });
     }
 
-    console.log(`[${new Date().toISOString()}] [API send-notification] Calling sendEachForMulticast...`);
-    const response = await admin.messaging().sendEachForMulticast({ messages });
+    console.log(`[${new Date().toISOString()}] [API send-notification] Calling sendEach...`);
+    // Send each message individually using sendEach
+    const response = await admin.messaging().sendEach(messages);
     
-    console.log(`\n[${new Date().toISOString()}] [API send-notification] Multicast send completed!`);
+    console.log(`\n[${new Date().toISOString()}] [API send-notification] Send completed!`);
     console.log(`[${new Date().toISOString()}] [API send-notification] Success count:`, response.successCount, '✅');
     console.log(`[${new Date().toISOString()}] [API send-notification] Failure count:`, response.failureCount, '❌');
     console.log(`[${new Date().toISOString()}] [API send-notification] Individual results:`, 
