@@ -91,6 +91,10 @@ async function sendFcmNotification({
   console.log('[sendFcmNotification] 🔄 Iniciando chamada...');
   console.log('[sendFcmNotification] Endpoint:', apiUrl);
   console.log('[sendFcmNotification] Payload:', payload);
+  console.log('[FETCH] URL completa:', apiUrl);
+  console.log('[FETCH] Método HTTP:', 'POST');
+  console.log('[FETCH] Headers:', { 'Content-Type': 'application/json' });
+  console.log('[FETCH] Body:', JSON.stringify(payload));
   
   // Salvar na página de debug
   if (typeof window !== 'undefined') {
@@ -132,11 +136,12 @@ async function sendFcmNotification({
     });
     
     // Logs após a chamada
-    console.log('[sendFcmNotification] status:', response.status);
+    console.log('[FETCH] STATUS:', response.status);
+    console.log('[FETCH] OK:', response.ok);
     
     // Obter texto bruto para debug
     const rawText = await response.text();
-    console.log('[sendFcmNotification] resposta bruta (raw):', rawText);
+    console.log('[FETCH] RESPONSE TEXT:', rawText);
     
     let result;
     try {
@@ -169,6 +174,9 @@ async function sendFcmNotification({
     
     return result;
   } catch (error) {
+    console.error('[FETCH] NETWORK ERROR:', error);
+    console.error('[FETCH] ERROR NAME:', error?.name);
+    console.error('[FETCH] ERROR MESSAGE:', error?.message);
     console.error('[sendFcmNotification] ❌ Erro:', error);
     
     // Salvar erro na página de debug
