@@ -2,7 +2,7 @@
 import { Capacitor } from '@capacitor/core';
 import { PushNotifications, PushNotificationSchema, ActionPerformed, Token } from '@capacitor/push-notifications';
 import { updateUserFcmToken } from './adminService';
-import { getFcmToken, onFcmMessage, getDiagnosticFirebaseConfig, isFirebaseConfigured } from './firebase';
+import { getFcmToken, onFcmMessage, getDiagnosticFirebaseConfig, isFirebaseConfigured, isSupported } from './firebase';
 import Taro from '@tarojs/taro';
 
 // Armazena o token FCM e os listeners para limpeza
@@ -23,7 +23,7 @@ const LOCAL_TOKEN_KEY = 'gm.fcmToken';
 const log = (message: string, data?: any) => {
   const timestamp = new Date().toISOString();
   console.log(`${TAG} [${timestamp}] ${message}`, data || '');
-  // Salva log no debug
+  // Salva log no debug (sem limite!)
   if (typeof window !== 'undefined') {
     if (!(window as any).__DEBUG_PUSH__) {
       (window as any).__DEBUG_PUSH__ = { logs: [], lastSent: null, lastReceived: null, lastError: null, lastTokenUpdate: null };
@@ -31,14 +31,14 @@ const log = (message: string, data?: any) => {
     (window as any).__DEBUG_PUSH__.logs = [
       ...((window as any).__DEBUG_PUSH__.logs || []),
       { type: 'INFO', message, data, timestamp: Date.now() }
-    ].slice(-100);
+    ];
   }
 };
 
 const logError = (message: string, error?: any) => {
   const timestamp = new Date().toISOString();
   console.error(`${TAG} [${timestamp}] ERRO: ${message}`, error || '');
-  // Salva log no debug
+  // Salva log no debug (sem limite!)
   if (typeof window !== 'undefined') {
     if (!(window as any).__DEBUG_PUSH__) {
       (window as any).__DEBUG_PUSH__ = { logs: [], lastSent: null, lastReceived: null, lastError: null, lastTokenUpdate: null };
@@ -46,7 +46,7 @@ const logError = (message: string, error?: any) => {
     (window as any).__DEBUG_PUSH__.logs = [
       ...((window as any).__DEBUG_PUSH__.logs || []),
       { type: 'ERROR', message, data: error, timestamp: Date.now() }
-    ].slice(-100);
+    ];
     (window as any).__DEBUG_PUSH__.lastError = error;
   }
 };
@@ -181,13 +181,11 @@ const initializeWebPush = async (userId?: string): Promise<void> => {
       (window as any).__DEBUG_PUSH__.notificationPermission = notificationPermission;
     }
 
-    // Diagnóstico: isSupported() do Firebase Messaging?
-    // Verificar se o navegador suporta Firebase Messaging
+    // Diagnóstico: isSupported() REAL do Firebase Messaging!
     let isMessagingSupported = false;
     try {
-      // Tentar importar isSupported (mas se não disponível, usar checks básicos)
-      isMessagingSupported = hasServiceWorkerAPI && hasNotificationAPI && ('PushManager' in window);
-      log('[initializeWebPush] isSupported() (básico)', { isSupported: isMessagingSupported });
+      isMessagingSupported = await isSupported();
+      log('[initializeWebPush] isSupported() (do Firebase)', { isSupported: isMessagingSupported });
       if (typeof window !== 'undefined') {
         (window as any).__DEBUG_PUSH__.messagingIsSupported = isMessagingSupported;
       }
@@ -310,24 +308,34 @@ const initializeWebPush = async (userId?: string): Promise<void> => {
         // Obtém token FCM para Web
         try {
           log('[initializeWebPush] Chamando getFcmToken()...');
+          const getTokenStartTime = Date.now();
           const webToken = await getFcmToken(swRegistration || undefined);
+          const getTokenEndTime = Date.now();
+          const getTokenDuration = getTokenEndTime - getTokenStartTime;
+          
           if (webToken) {
-            log('[initializeWebPush] Token FCM Web obtido', { token: webToken.substring(0, 20) + '...' });
+            log('[initializeWebPush] Token FCM Web obtido', { token: webToken.substring(0, 20) + '...', duration: getTokenDuration + 'ms' });
             saveTokenLocal(webToken);
             if (userId) {
               await saveTokenToFirebase(webToken, userId);
             }
             if (typeof window !== 'undefined') {
               (window as any).__DEBUG_PUSH__.getFcmTokenSuccess = true;
+              (window as any).__DEBUG_PUSH__.getFcmToken = webToken;
+              (window as any).__DEBUG_PUSH__.getFcmTokenDuration = getTokenDuration;
+              (window as any).__DEBUG_PUSH__.getFcmTokenTimestamp = getTokenEndTime;
             }
           } else {
             logError('[initializeWebPush] Não foi possível obter token FCM Web: getFcmToken retornou null');
             if (typeof window !== 'undefined') {
               (window as any).__DEBUG_PUSH__.getFcmTokenSuccess = false;
               (window as any).__DEBUG_PUSH__.getFcmTokenError = 'retornou null';
+              (window as any).__DEBUG_PUSH__.getFcmTokenDuration = getTokenDuration;
+              (window as any).__DEBUG_PUSH__.getFcmTokenTimestamp = getTokenEndTime;
             }
           }
         } catch (getTokenErr: any) {
+          const getTokenEndTime = Date.now();
           logError('[initializeWebPush] Erro ao obter token FCM Web', {
             name: getTokenErr?.name,
             code: getTokenErr?.code,
@@ -337,6 +345,7 @@ const initializeWebPush = async (userId?: string): Promise<void> => {
           if (typeof window !== 'undefined') {
             (window as any).__DEBUG_PUSH__.getFcmTokenSuccess = false;
             (window as any).__DEBUG_PUSH__.getFcmTokenError = getTokenErr?.message || 'unknown';
+            (window as any).__DEBUG_PUSH__.getFcmTokenErrorFull = getTokenErr;
           }
         }
       } else {

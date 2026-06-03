@@ -1,5 +1,6 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import admin from 'firebase-admin';
+import { getFirestore } from 'firebase-admin/firestore';
 
 console.log(`[${new Date().toISOString()}] [send-notification] Serverless function initialized`);
 
@@ -138,12 +139,16 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     console.log('[FCM API] successCount:', fcmResult.successCount);
     console.log('[FCM API] failureCount:', fcmResult.failureCount);
     
-    // PASSO 5: tabela final de diagnóstico
+    // PASSO 5: tabela final de diagnóstico e limpeza de tokens inválidos
     console.log('\n========== TABELA DE DIAGNÓSTICO ==========');
     console.log('TOKEN | SUCCESS | MESSAGE_ID | ERROR_CODE | ERROR_MESSAGE');
     console.log('-------------------------------------------');
     
-    fcmResult.responses.forEach((response, index) => {
+    const invalidTokens: string[] = [];
+    const firestoreDb = getFirestore();
+    
+    for (let index = 0; index < fcmResult.responses.length; index++) {
+      const response = fcmResult.responses[index];
       const token = fcmTokens[index];
       const success = response.success;
       const messageId = response.messageId || null;
@@ -154,14 +159,62 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         `${token.substring(0, 15)}... | ${success} | ${messageId ? messageId.substring(0, 15) + '...' : 'N/A'} | ${errorCode || 'N/A'} | ${errorMessage ? errorMessage.substring(0, 30) + '...' : 'N/A'}`
       );
       
-      if (!response.success && response.error) {
+      if (!success && response.error) {
         console.error('[FCM API] Falha no token:', token.substring(0, 15) + '...');
-        console.error('[FCM API] Error code:', response.error.code);
-        console.error('[FCM API] Error message:', response.error.message);
+        console.error('[FCM API] Error code:', errorCode);
+        console.error('[FCM API] Error message:', errorMessage);
+        
+        // Check if error is related to invalid/expired token
+        if (
+          errorCode === 'messaging/registration-token-not-registered' ||
+          errorCode === 'messaging/invalid-registration-token'
+        ) {
+          invalidTokens.push(token);
+        }
       }
-    });
+    }
     
     console.log('==========================================\n');
+    
+    // Clean invalid tokens from Firestore
+    if (invalidTokens.length > 0) {
+      console.log('[FCM API] Iniciando limpeza de tokens inválidos:', invalidTokens.map(t => t.substring(0, 15) + '...'));
+      
+      try {
+        const usersSnapshot = await firestoreDb.collection('users').get();
+        
+        for (const doc of usersSnapshot.docs) {
+          const userData = doc.data();
+          let needsUpdate = false;
+          const updateData: any = {};
+          
+          // Check and clean fcmToken field
+          if (userData.fcmToken && invalidTokens.includes(userData.fcmToken)) {
+            updateData.fcmToken = admin.firestore.FieldValue.delete();
+            needsUpdate = true;
+            console.log('[FCM API] Removendo fcmToken do usuário:', doc.id, userData.email);
+          }
+          
+          // Check and clean fcmTokens array
+          if (userData.fcmTokens && Array.isArray(userData.fcmTokens)) {
+            const tokensToRemove = userData.fcmTokens.filter((t: string) => invalidTokens.includes(t));
+            if (tokensToRemove.length > 0) {
+              updateData.fcmTokens = admin.firestore.FieldValue.arrayRemove(...tokensToRemove);
+              needsUpdate = true;
+              console.log('[FCM API] Removendo tokens do array fcmTokens do usuário:', doc.id, userData.email, tokensToRemove.map(t => t.substring(0, 15) + '...'));
+            }
+          }
+          
+          // Update the document only if needed
+          if (needsUpdate) {
+            await firestoreDb.collection('users').doc(doc.id).update(updateData);
+            console.log('[FCM API] Documento atualizado com sucesso:', doc.id);
+          }
+        }
+      } catch (cleanupError) {
+        console.error('[FCM API] Erro durante limpeza de tokens inválidos:', cleanupError);
+      }
+    }
 
     // 5. Return success response (EXACT format as required)
     return res.status(200).json({

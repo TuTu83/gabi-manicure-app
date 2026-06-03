@@ -47,11 +47,18 @@
       (function() {
         try {
           if (!('serviceWorker' in navigator)) return;
-          window.addEventListener('load', function() {
-            navigator.serviceWorker.register('/sw.js').catch(function(err) {
-              console.warn('[PWA] falha ao registrar service worker', err);
+          // Only register the generic SW for native Capacitor, not for web PWA
+          const isCapacitor =
+            (typeof window !== 'undefined' && (window as any).Capacitor) ||
+            (typeof document !== 'undefined' && document.URL.startsWith('capacitor://')) ||
+            (typeof document !== 'undefined' && document.URL.startsWith('ionic://'));
+          if (isCapacitor) {
+            window.addEventListener('load', function() {
+              navigator.serviceWorker.register('/sw.js').catch(function(err) {
+                console.warn('[PWA] falha ao registrar service worker', err);
+              });
             });
-          });
+          }
         } catch (e) {}
       })();
     </script>

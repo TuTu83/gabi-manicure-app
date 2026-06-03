@@ -2,7 +2,7 @@ import { initializeApp, getApps, type FirebaseApp } from 'firebase/app';
 import { browserLocalPersistence, getAuth, setPersistence, type Auth } from 'firebase/auth';
 import { getFirestore, type Firestore } from 'firebase/firestore';
 import { getStorage, type FirebaseStorage } from 'firebase/storage';
-import { getMessaging, getToken, onMessage, type Messaging } from 'firebase/messaging';
+import { getMessaging, getToken, onMessage, isSupported, type Messaging } from 'firebase/messaging';
 
 declare const __GM_FIREBASE_ENV__: any;
 declare const __GM_FIREBASE_DEBUG__: any;
@@ -331,6 +331,8 @@ export async function getFcmToken(
     return null;
   }
 }
+
+export { isSupported };
 
 export function onFcmMessage(callback: (payload: any) => void): () => void {
   const messaging = getFirebaseMessaging();

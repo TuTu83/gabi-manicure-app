@@ -78,11 +78,33 @@ const DashboardPage: React.FC = () => {
   const [diagnosticFirebaseConfig, setDiagnosticFirebaseConfig] = useState<any>(null);
   const [exportedFirebaseConfigMasked, setExportedFirebaseConfigMasked] = useState<any>(null);
 
+  const runCompleteDiagnostic = async () => {
+    await refreshDebugData();
+    if (typeof window !== 'undefined' && 'serviceWorker' in navigator) {
+      const registrations = await navigator.serviceWorker.getRegistrations();
+      const controller = navigator.serviceWorker.controller;
+      if (!(window as any).__DEBUG_PUSH__) {
+        (window as any).__DEBUG_PUSH__ = { logs: [], lastSent: null, lastReceived: null, lastError: null, lastTokenUpdate: null };
+      }
+      (window as any).__DEBUG_PUSH__.currentSWRegistrations = registrations.map(reg => ({
+        scope: reg.scope,
+        active: !!reg.active,
+        waiting: !!reg.waiting,
+        installing: !!reg.installing,
+      }));
+      (window as any).__DEBUG_PUSH__.currentSWController = controller ? {
+        scriptURL: controller.scriptURL,
+        state: controller.state,
+      } : null;
+      await refreshDebugData();
+    }
+  };
+
   const refreshDebugData = async () => {
     const isBrowser = typeof window !== 'undefined' && typeof navigator !== 'undefined';
     const isNative = Capacitor.isNativePlatform();
     
-    let debugStore: {
+    const defaultDebugStore: {
       logs: LogItem[];
       lastSent: any;
       lastReceived: any;
@@ -99,8 +121,20 @@ const DashboardPage: React.FC = () => {
       fcmToken: null,
       lastTokenUpdate: null,
     };
+    
+    let debugStore = defaultDebugStore;
     if (isBrowser) {
-      debugStore = (window as any).__DEBUG_PUSH__ || debugStore;
+      const rawDebugStore = (window as any).__DEBUG_PUSH__ || {};
+      // Ensure all required fields exist and are correct type
+      debugStore = {
+        logs: Array.isArray(rawDebugStore.logs) ? rawDebugStore.logs : [],
+        lastSent: rawDebugStore.lastSent || null,
+        lastReceived: rawDebugStore.lastReceived || null,
+        lastError: rawDebugStore.lastError || null,
+        lastApiCall: rawDebugStore.lastApiCall || null,
+        fcmToken: rawDebugStore.fcmToken || rawDebugStore.getFcmToken || null,
+        lastTokenUpdate: rawDebugStore.lastTokenUpdate || null,
+      };
     }
     setDebugData(debugStore);
 
@@ -148,30 +182,36 @@ const DashboardPage: React.FC = () => {
     const currentToken = getCurrentFcmToken();
     const checkResult = await checkPushPermissions();
     
+    const rawDebugStore = isBrowser ? (window as any).__DEBUG_PUSH__ || {} : {};
     setPushDiagnostics(prev => ({ 
       ...prev, 
-      fcmToken: currentToken || debugStore.fcmToken || null,
-      lastTokenUpdate: debugStore.lastTokenUpdate ?? null,
+      fcmToken: currentToken || rawDebugStore.fcmToken || rawDebugStore.getFcmToken || null,
+      lastTokenUpdate: rawDebugStore.lastTokenUpdate ?? null,
       checkPermissionsResult: checkResult,
       messagingAvailable: !!messaging,
-      messagingObjectCreated: debugStore.messagingObjectCreated ?? false,
-      serviceWorkerRegistered: debugStore.serviceWorkerRegistered ?? false,
-      serviceWorkerScope: debugStore.serviceWorkerScope ?? null,
-      serviceWorkerError: debugStore.serviceWorkerError ?? null,
-      messagingError: debugStore.messagingError ?? null,
-      serviceWorkerAPIAvailable: debugStore.serviceWorkerAPIAvailable ?? false,
-      notificationAPIAvailable: debugStore.notificationAPIAvailable ?? false,
-      notificationPermission: debugStore.notificationPermission ?? null,
-      messagingIsSupported: debugStore.messagingIsSupported ?? false,
-      existingSWRegistrations: debugStore.existingSWRegistrations ?? null,
-      serviceWorkerActive: debugStore.serviceWorkerActive ?? false,
-      serviceWorkerWaiting: debugStore.serviceWorkerWaiting ?? false,
-      serviceWorkerInstalling: debugStore.serviceWorkerInstalling ?? false,
-      getFcmTokenSuccess: debugStore.getFcmTokenSuccess ?? null,
-      getFcmTokenError: debugStore.getFcmTokenError ?? null,
-      firebaseDiagnostic: debugStore.firebaseDiagnostic ?? null,
-      firebaseSdkStatus: debugStore.firebaseSdkStatus ?? null,
-      registrationStatus: currentToken || debugStore.fcmToken ? 'registered' : 'not_registered'
+      messagingObjectCreated: rawDebugStore.messagingObjectCreated ?? false,
+      serviceWorkerRegistered: rawDebugStore.serviceWorkerRegistered ?? false,
+      serviceWorkerScope: rawDebugStore.serviceWorkerScope ?? null,
+      serviceWorkerError: rawDebugStore.serviceWorkerError ?? null,
+      messagingError: rawDebugStore.messagingError ?? null,
+      serviceWorkerAPIAvailable: rawDebugStore.serviceWorkerAPIAvailable ?? false,
+      notificationAPIAvailable: rawDebugStore.notificationAPIAvailable ?? false,
+      notificationPermission: rawDebugStore.notificationPermission ?? null,
+      messagingIsSupported: rawDebugStore.messagingIsSupported ?? false,
+      existingSWRegistrations: rawDebugStore.existingSWRegistrations ?? null,
+      currentSWRegistrations: rawDebugStore.currentSWRegistrations ?? null,
+      currentSWController: rawDebugStore.currentSWController ?? null,
+      serviceWorkerActive: rawDebugStore.serviceWorkerActive ?? false,
+      serviceWorkerWaiting: rawDebugStore.serviceWorkerWaiting ?? false,
+      serviceWorkerInstalling: rawDebugStore.serviceWorkerInstalling ?? false,
+      getFcmTokenSuccess: rawDebugStore.getFcmTokenSuccess ?? null,
+      getFcmTokenError: rawDebugStore.getFcmTokenError ?? null,
+      getFcmTokenDuration: rawDebugStore.getFcmTokenDuration ?? null,
+      getFcmTokenTimestamp: rawDebugStore.getFcmTokenTimestamp ?? null,
+      getFcmTokenErrorFull: rawDebugStore.getFcmTokenErrorFull ?? null,
+      firebaseDiagnostic: rawDebugStore.firebaseDiagnostic ?? null,
+      firebaseSdkStatus: rawDebugStore.firebaseSdkStatus ?? null,
+      registrationStatus: currentToken || rawDebugStore.fcmToken || rawDebugStore.getFcmToken ? 'registered' : 'not_registered'
     }));
 
     setIsLoading(false);
@@ -1220,8 +1260,84 @@ ${data.pushDiagnostics.getFcmTokenError}
         <View style={{ gap: '10px' }}>
           <View style={{ flexDirection: 'row', gap: '10px' }}>
             <ActionButton onClick={requestPushPermissions} variant="primary">🔑 Permissões Push</ActionButton>
+            <ActionButton onClick={runCompleteDiagnostic} variant="primary">🔍 Executar Diagnóstico Completo</ActionButton>
             <ActionButton onClick={refreshDebugData}>🔄 Atualizar Diagnósticos</ActionButton>
           </View>
+        </View>
+      </Card>
+
+      {/* New: Service Workers Detailed Info */}
+      <Card title="Service Workers - Detalhes" icon="🔧">
+        <View style={{ gap: '12px' }}>
+          {pushDiagnostics.currentSWController && (
+            <View style={{ gap: '8px', padding: '12px', backgroundColor: '#f0fdf4', border: '1px solid #bbf7d0', borderRadius: '8px' }}>
+              <Text style={{ fontSize: '13px', fontWeight: '700', color: '#166534' }}>✅ Service Worker Controlador</Text>
+              <Text style={{ fontSize: '11px', color: '#166534', fontFamily: 'monospace', wordBreak: 'break-all' }} selectable>
+                Script URL: {pushDiagnostics.currentSWController.scriptURL}
+              </Text>
+              <Text style={{ fontSize: '12px', color: '#166534' }}>
+                State: {pushDiagnostics.currentSWController.state}
+              </Text>
+            </View>
+          )}
+
+          {pushDiagnostics.currentSWRegistrations?.length > 0 ? (
+            <View style={{ gap: '10px' }}>
+              <Text style={{ fontSize: '13px', fontWeight: '700', color: '#111827' }}>Service Workers Registrados ({pushDiagnostics.currentSWRegistrations.length}):</Text>
+              {pushDiagnostics.currentSWRegistrations.map((sw, index) => (
+                <View key={index} style={{ padding: '10px', backgroundColor: '#f3f4f6', borderRadius: '8px', gap: '6px' }}>
+                  <Text style={{ fontSize: '12px', fontWeight: '600', color: '#374151' }}>
+                    {sw.scope}
+                  </Text>
+                  <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: '8px' }}>
+                    <Badge label="Active" status={sw.active} />
+                    <Badge label="Waiting" status={sw.waiting} />
+                    <Badge label="Installing" status={sw.installing} />
+                  </View>
+                </View>
+              ))}
+            </View>
+          ) : (
+            <Text style={{ fontSize: '13px', color: '#6b7280', textAlign: 'center' }}>
+              Nenhum Service Worker registrado
+            </Text>
+          )}
+        </View>
+      </Card>
+
+      {/* New: getFcmToken Detailed Info */}
+      <Card title="getFcmToken() - Detalhes" icon="🔑">
+        <View style={{ gap: '12px' }}>
+          {pushDiagnostics.getFcmTokenTimestamp && (
+            <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+              <Text style={{ fontSize: '13px', color: '#6b7280' }}>Data/Hora</Text>
+              <Text style={{ fontSize: '13px', color: '#374151' }}>
+                {new Date(pushDiagnostics.getFcmTokenTimestamp).toLocaleString('pt-BR')}
+              </Text>
+            </View>
+          )}
+
+          {pushDiagnostics.getFcmTokenDuration && (
+            <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+              <Text style={{ fontSize: '13px', color: '#6b7280' }}>Duração</Text>
+              <Text style={{ fontSize: '13px', color: '#374151' }}>
+                {pushDiagnostics.getFcmTokenDuration}ms
+              </Text>
+            </View>
+          )}
+
+          {pushDiagnostics.fcmToken && (
+            <>
+              <Text style={{ fontSize: '13px', fontWeight: '700', color: '#111827' }}>Token FCM:</Text>
+              <Text style={{ fontSize: '11px', color: '#374151', fontFamily: 'monospace', wordBreak: 'break-all', backgroundColor: '#f3f4f6', padding: '10px', borderRadius: '8px' }} selectable>
+                {pushDiagnostics.fcmToken}
+              </Text>
+            </>
+          )}
+
+          {pushDiagnostics.getFcmTokenErrorFull && (
+            <JsonPreview data={pushDiagnostics.getFcmTokenErrorFull} label="Erro Completo" />
+          )}
         </View>
       </Card>
 
