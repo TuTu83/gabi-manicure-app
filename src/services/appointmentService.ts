@@ -465,10 +465,26 @@ export async function createAppointment(input: Omit<Appointment, 'id' | 'created
       httpStatus: null,
       apiResponse: null,
       timestamp: new Date().toISOString(),
+      userId: input.userId,
+      userName: input.userName,
+      appointmentId: appointment.id,
+      currentStep: 'initializing',
+      adminCount: null,
+      tokenCount: null,
+      maskedTokens: null,
+      payloadSent: null,
     };
   }
   try {
+    console.log('[createAppointment] Step: calling getAdminFcmTokens()');
+    if (typeof window !== 'undefined') {
+      (window as any).__DEBUG_PUSH__.lastSendFlow.currentStep = 'calling_getAdminFcmTokens';
+    }
+    
     const adminFcmTokens = await getAdminFcmTokens();
+    
+    const rawDebugStore = (typeof window !== 'undefined' && (window as any).__DEBUG_PUSH__) || {};
+    const adminCount = rawDebugStore.getAdminFcmTokens?.adminCount || null;
     
     console.log(
       '[PUSH DEBUG] Tokens encontrados:', 
@@ -479,19 +495,28 @@ export async function createAppointment(input: Omit<Appointment, 'id' | 'created
     const timeStr = dayjs(startAt).format('HH:mm');
     
     const tokensToSend: string[] = [...adminFcmTokens];
+    const maskedTokens = tokensToSend.map(t => `${t.substring(0,10)}...`);
     
-    console.log('[createAppointment] Tokens to send:', tokensToSend.map(t => `${t.substring(0,10)}...`));
+    console.log('[createAppointment] Tokens to send:', maskedTokens);
     
     // Update lastSendFlow with token info
     if (typeof window !== 'undefined') {
       const debugWindow = window as any;
       debugWindow.__DEBUG_PUSH__.lastSendFlow.tokensFound = Array.isArray(tokensToSend) && tokensToSend.length > 0;
       debugWindow.__DEBUG_PUSH__.lastSendFlow.tokens = tokensToSend;
+      debugWindow.__DEBUG_PUSH__.lastSendFlow.adminCount = adminCount;
+      debugWindow.__DEBUG_PUSH__.lastSendFlow.tokenCount = tokensToSend.length;
+      debugWindow.__DEBUG_PUSH__.lastSendFlow.maskedTokens = maskedTokens;
+      debugWindow.__DEBUG_PUSH__.lastSendFlow.currentStep = 'tokens_received';
     }
     
     if (tokensToSend.length > 0) {
-      console.log('[createAppointment] Calling sendFcmNotification...');
-      await sendFcmNotification({
+      console.log('[createAppointment] Step: calling sendFcmNotification()');
+      if (typeof window !== 'undefined') {
+        (window as any).__DEBUG_PUSH__.lastSendFlow.currentStep = 'calling_sendFcmNotification';
+      }
+      
+      const payload = {
         title: 'Novo Agendamento!',
         body: `${input.userName || 'Cliente'} agendou para ${dateStr} às ${timeStr}`,
         fcmTokens: tokensToSend,
@@ -500,10 +525,22 @@ export async function createAppointment(input: Omit<Appointment, 'id' | 'created
           appointmentId: appointment.id,
           url: '/pages/admin/index',
         },
-      });
+      };
+      
+      if (typeof window !== 'undefined') {
+        (window as any).__DEBUG_PUSH__.lastSendFlow.payloadSent = payload;
+      }
+      
+      await sendFcmNotification(payload);
       console.log('[createAppointment] sendFcmNotification completed');
+      if (typeof window !== 'undefined') {
+        (window as any).__DEBUG_PUSH__.lastSendFlow.currentStep = 'completed';
+      }
     } else {
       console.warn('[createAppointment] No tokens to send!');
+      if (typeof window !== 'undefined') {
+        (window as any).__DEBUG_PUSH__.lastSendFlow.currentStep = 'no_tokens';
+      }
     }
   } catch (error) {
     console.error('[createAppointment] Error sending FCM notifications for new appointment:', error);
@@ -511,6 +548,8 @@ export async function createAppointment(input: Omit<Appointment, 'id' | 'created
       const debugWindow = window as any;
       if (debugWindow.__DEBUG_PUSH__) {
         debugWindow.__DEBUG_PUSH__.lastSendFlow.error = String(error);
+        debugWindow.__DEBUG_PUSH__.lastSendFlow.currentStep = 'error';
+        debugWindow.__DEBUG_PUSH__.lastSendFlow.errorDetails = error;
       }
     }
   }

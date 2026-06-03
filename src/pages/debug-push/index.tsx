@@ -112,6 +112,7 @@ const DashboardPage: React.FC = () => {
       lastApiCall: any;
       fcmToken?: string | null;
       lastTokenUpdate?: number | null;
+      lastSendFlow?: any;
     } = {
       logs: [],
       lastSent: null,
@@ -120,6 +121,7 @@ const DashboardPage: React.FC = () => {
       lastApiCall: null,
       fcmToken: null,
       lastTokenUpdate: null,
+      lastSendFlow: null,
     };
     
     let debugStore = defaultDebugStore;
@@ -134,6 +136,7 @@ const DashboardPage: React.FC = () => {
         lastApiCall: rawDebugStore.lastApiCall || null,
         fcmToken: rawDebugStore.fcmToken || rawDebugStore.getFcmToken || null,
         lastTokenUpdate: rawDebugStore.lastTokenUpdate || null,
+        lastSendFlow: rawDebugStore.lastSendFlow || null,
       };
     }
     setDebugData(debugStore);
@@ -1291,6 +1294,107 @@ ${data.pushDiagnostics.getFcmTokenError}
 
           {pushDiagnostics.checkPermissionsResult && <JsonPreview data={pushDiagnostics.checkPermissionsResult} label="PushNotifications.checkPermissions()" />}
           {pushDiagnostics.requestPermissionsResult && <JsonPreview data={pushDiagnostics.requestPermissionsResult} label="PushNotifications.requestPermissions()" />}
+        </View>
+      </Card>
+
+      {/* Último Fluxo de Envio */}
+      <Card title="Último Fluxo de Envio" icon="📤">
+        <View style={{ gap: '12px' }}>
+          {debugData.lastSendFlow ? (
+            <>
+              <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+                <Text style={{ fontSize: '13px', color: '#6b7280' }}>Timestamp</Text>
+                <Text style={{ fontSize: '13px', color: '#374151', fontWeight: '500' }}>
+                  {new Date(debugData.lastSendFlow.timestamp).toLocaleString('pt-BR')}
+                </Text>
+              </View>
+
+              <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+                <Text style={{ fontSize: '13px', color: '#6b7280' }}>Etapa Atual</Text>
+                <Text style={{ 
+                  fontSize: '13px', 
+                  fontWeight: 'bold',
+                  color: debugData.lastSendFlow.currentStep === 'completed' 
+                    ? '#10b981' 
+                    : debugData.lastSendFlow.currentStep === 'error' 
+                      ? '#ef4444' 
+                      : '#f59e0b'
+                }}>
+                  {debugData.lastSendFlow.currentStep}
+                </Text>
+              </View>
+
+              {debugData.lastSendFlow.userId && (
+                <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <Text style={{ fontSize: '13px', color: '#6b7280' }}>ID do Usuário</Text>
+                  <Text style={{ fontSize: '13px', color: '#374151' }}>
+                    {debugData.lastSendFlow.userId}
+                  </Text>
+                </View>
+              )}
+
+              {debugData.lastSendFlow.userName && (
+                <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <Text style={{ fontSize: '13px', color: '#6b7280' }}>Nome do Usuário</Text>
+                  <Text style={{ fontSize: '13px', color: '#374151' }}>
+                    {debugData.lastSendFlow.userName}
+                  </Text>
+                </View>
+              )}
+
+              {debugData.lastSendFlow.appointmentId && (
+                <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <Text style={{ fontSize: '13px', color: '#6b7280' }}>ID do Agendamento</Text>
+                  <Text style={{ fontSize: '13px', color: '#374151' }}>
+                    {debugData.lastSendFlow.appointmentId}
+                  </Text>
+                </View>
+              )}
+
+              <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+                <Text style={{ fontSize: '13px', color: '#6b7280' }}>Quantidade de Admins</Text>
+                <Text style={{ fontSize: '13px', color: '#374151' }}>
+                  {debugData.lastSendFlow.adminCount ?? 'N/A'}
+                </Text>
+              </View>
+
+              <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+                <Text style={{ fontSize: '13px', color: '#6b7280' }}>Quantidade de Tokens</Text>
+                <Text style={{ fontSize: '13px', color: '#374151' }}>
+                  {debugData.lastSendFlow.tokenCount ?? 'N/A'}
+                </Text>
+              </View>
+
+              {debugData.lastSendFlow.maskedTokens?.length > 0 && (
+                <View style={{ gap: '8px' }}>
+                  <Text style={{ fontSize: '13px', fontWeight: '700', color: '#111827' }}>Tokens (mascarados):</Text>
+                  <View style={{ flexDirection: 'column', gap: '4px' }}>
+                    {debugData.lastSendFlow.maskedTokens.map((token: string, index: number) => (
+                      <Text key={index} style={{ fontSize: '11px', color: '#374151', fontFamily: 'monospace' }} selectable>
+                        - {token}
+                      </Text>
+                    ))}
+                  </View>
+                </View>
+              )}
+
+              {debugData.lastSendFlow.payloadSent && (
+                <JsonPreview data={debugData.lastSendFlow.payloadSent} label="Payload Enviado para a API" />
+              )}
+
+              {debugData.lastSendFlow.error && (
+                <View style={{ padding: '12px', backgroundColor: '#fef2f2', border: '1px solid #fecaca', borderRadius: '8px' }}>
+                  <Text style={{ fontSize: '12px', color: '#991b1b', fontWeight: 'bold', marginBottom: '6px' }}>Erro:</Text>
+                  <Text style={{ fontSize: '12px', color: '#991b1b' }} selectable>{debugData.lastSendFlow.error}</Text>
+                  {debugData.lastSendFlow.errorDetails && <JsonPreview data={debugData.lastSendFlow.errorDetails} label="Detalhes do Erro" />}
+                </View>
+              )}
+            </>
+          ) : (
+            <Text style={{ fontSize: '13px', color: '#6b7280', textAlign: 'center' }}>
+              Nenhum fluxo de envio registrado
+            </Text>
+          )}
         </View>
       </Card>
 
