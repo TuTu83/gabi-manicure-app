@@ -383,6 +383,8 @@ export async function createAppointment(input: Omit<Appointment, 'id' | 'created
   const rl = consumeRateLimit({ key: `createAppointment:${input.userId}`, max: 2, windowMs: 15000 });
   if (!rl.allowed) throw new Error('Muitas tentativas seguidas. Aguarde alguns segundos e tente novamente.');
 
+  let appointment: Appointment;
+  
   if (!isFirebaseConfigured()) {
     const all = safeGetArray<Appointment>(appointmentsKey);
     const hasConflict = all.some(
@@ -394,7 +396,7 @@ export async function createAppointment(input: Omit<Appointment, 'id' | 'created
     );
     if (hasConflict) throw new Error('Este horário acabou de ser ocupado. Escolha outro horário.');
 
-    const appointment: Appointment = {
+    appointment = {
       ...input,
       id: `local_${Date.now()}`,
       status: 'pendente',
@@ -402,8 +404,7 @@ export async function createAppointment(input: Omit<Appointment, 'id' | 'created
       updatedAt: Date.now(),
     };
     safeSetArray(appointmentsKey, [appointment, ...all]);
-    return appointment;
-  }
+  } else {
 
   const db = getFirebaseDb();
   if (!db) throw new Error('Firebase indisponível');
@@ -422,38 +423,40 @@ export async function createAppointment(input: Omit<Appointment, 'id' | 'created
     if (String(error?.message || '').includes('Aguarde alguns segundos')) throw error;
   }
 
-  const appointment = await runTransaction(db, async (tx) => {
-    const start = dayjs(startAt).startOf('day').valueOf();
-    const end = dayjs(startAt).endOf('day').valueOf();
-    const q = query(
-      collection(db, 'appointments'),
-      where('startAt', '>=', start),
-      where('startAt', '<=', end),
-      orderBy('startAt', 'asc'),
-    );
-    const snap = await getDocs(q);
+    appointment = await runTransaction(db, async (tx) => {
+      const start = dayjs(startAt).startOf('day').valueOf();
+      const end = dayjs(startAt).endOf('day').valueOf();
+      const q = query(
+        collection(db, 'appointments'),
+        where('startAt', '>=', start),
+        where('startAt', '<=', end),
+        orderBy('startAt', 'asc'),
+      );
+      const snap = await getDocs(q);
 
-    const conflicts = snap.docs.some((d) => {
-      const data = d.data() as Appointment;
-      if (data.professionalId !== input.professionalId) return false;
-      if (data.status === 'cancelado' || data.status === 'recusado') return false;
-      return overlaps(startAt, endAt, data.startAt, data.endAt);
+      const conflicts = snap.docs.some((d) => {
+        const data = d.data() as Appointment;
+        if (data.professionalId !== input.professionalId) return false;
+        if (data.status === 'cancelado' || data.status === 'recusado') return false;
+        return overlaps(startAt, endAt, data.startAt, data.endAt);
+      });
+      if (conflicts) throw new Error('Este horário acabou de ser ocupado. Escolha outro horário.');
+
+      const ref = doc(collection(db, 'appointments'));
+      const payloadRaw: Omit<Appointment, 'id'> = {
+        ...input,
+        status: 'pendente',
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+      };
+      const payload = removeUndefinedFields(payloadRaw);
+      tx.set(ref, payload as any);
+      return { id: ref.id, ...(payload as any) };
     });
-    if (conflicts) throw new Error('Este horário acabou de ser ocupado. Escolha outro horário.');
-
-    const ref = doc(collection(db, 'appointments'));
-    const payloadRaw: Omit<Appointment, 'id'> = {
-      ...input,
-      status: 'pendente',
-      createdAt: Date.now(),
-      updatedAt: Date.now(),
-    };
-    const payload = removeUndefinedFields(payloadRaw);
-    tx.set(ref, payload as any);
-    return { id: ref.id, ...(payload as any) };
-  });
+  }
 
   // Send FCM notifications
+  console.log('[FLOW] CHEGOU NO ENVIO DE NOTIFICAÇÃO');
   console.log('[AGENDAMENTO] Iniciando envio de notificação');
   console.log('[AGENDAMENTO] appointmentId:', appointment.id);
   console.log('[AGENDAMENTO] userId:', input.userId);
@@ -520,6 +523,7 @@ export async function createAppointment(input: Omit<Appointment, 'id' | 'created
     
     if (tokensToSend.length > 0) {
       console.log('[createAppointment] Step: calling sendFcmNotification()');
+      console.log('[FLOW] EXECUTANDO sendFcmNotification');
       if (typeof window !== 'undefined') {
         (window as any).__DEBUG_PUSH__.lastSendFlow.currentStep = 'calling_sendFcmNotification';
       }
@@ -539,7 +543,8 @@ export async function createAppointment(input: Omit<Appointment, 'id' | 'created
         (window as any).__DEBUG_PUSH__.lastSendFlow.payloadSent = payload;
       }
       
-      await sendFcmNotification(payload);
+      const sendResult = await sendFcmNotification(payload);
+      console.log('[FLOW] RESULTADO DO ENVIO', sendResult);
       console.log('[createAppointment] sendFcmNotification completed');
       if (typeof window !== 'undefined') {
         (window as any).__DEBUG_PUSH__.lastSendFlow.currentStep = 'completed';
