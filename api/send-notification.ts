@@ -41,13 +41,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
   try {
     // 2. Validate request body
-    const { title, body, fcmTokens } = req.body || {};
+    const { title, body, fcmTokens, data = {} } = req.body || {};
 
-    console.log(`[${new Date().toISOString()}] [send-notification] Payload received:`, {
-      title,
-      body: body?.substring?.(0, 50) + '...',
-      tokenCount: fcmTokens?.length
-    });
+    console.log('[FCM API] Request received at:', new Date().toISOString());
+    console.log('[FCM API] tokens recebidos:', fcmTokens?.length);
+    console.log('[FCM API] tokens:', fcmTokens);
+    console.log('[FCM API] Payload completo:', { title, body, data });
 
     if (!title || typeof title !== 'string') {
       console.log(`[${new Date().toISOString()}] [send-notification] Invalid title`);
@@ -126,10 +125,43 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       }
     }));
 
-    console.log(`[${new Date().toISOString()}] [send-notification] Sending ${messages.length} notifications...`);
+    console.log(`[FCM API] Sending ${messages.length} notifications...`);
+    console.log('[FCM API] Usando método sendEach() do Firebase Admin SDK');
+    
+    // PASSO 3: log payload completo
+    console.log('[FCM API] Payload completo enviado ao Firebase:', JSON.stringify(messages, null, 2));
+    
     const fcmResult = await admin.messaging().sendEach(messages);
 
-    console.log(`[${new Date().toISOString()}] [send-notification] Notifications sent - Success: ${fcmResult.successCount}, Failed: ${fcmResult.failureCount}`);
+    console.log('[FCM RESULT]', JSON.stringify(fcmResult, null, 2));
+    
+    console.log('[FCM API] successCount:', fcmResult.successCount);
+    console.log('[FCM API] failureCount:', fcmResult.failureCount);
+    
+    // PASSO 5: tabela final de diagnóstico
+    console.log('\n========== TABELA DE DIAGNÓSTICO ==========');
+    console.log('TOKEN | SUCCESS | MESSAGE_ID | ERROR_CODE | ERROR_MESSAGE');
+    console.log('-------------------------------------------');
+    
+    fcmResult.responses.forEach((response, index) => {
+      const token = fcmTokens[index];
+      const success = response.success;
+      const messageId = response.messageId || null;
+      const errorCode = response.error?.code || null;
+      const errorMessage = response.error?.message || null;
+      
+      console.log(
+        `${token.substring(0, 15)}... | ${success} | ${messageId ? messageId.substring(0, 15) + '...' : 'N/A'} | ${errorCode || 'N/A'} | ${errorMessage ? errorMessage.substring(0, 30) + '...' : 'N/A'}`
+      );
+      
+      if (!response.success && response.error) {
+        console.error('[FCM API] Falha no token:', token.substring(0, 15) + '...');
+        console.error('[FCM API] Error code:', response.error.code);
+        console.error('[FCM API] Error message:', response.error.message);
+      }
+    });
+    
+    console.log('==========================================\n');
 
     // 5. Return success response (EXACT format as required)
     return res.status(200).json({

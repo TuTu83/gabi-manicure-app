@@ -32,8 +32,16 @@ try {
   const messaging = firebase.messaging();
   console.log("[SW] 10. firebase.messaging() finalizado com sucesso");
 
+  console.log('[SW] 11. Adicionando listener de push event');
+  self.addEventListener('push', (event) => {
+    console.log('[SW] PUSH EVENT RECEBIDO! Timestamp:', new Date().toISOString());
+    console.log('[SW] Push payload completo:', JSON.stringify(event.data?.json ? event.data.json() : event.data, null, 2));
+    console.log('[SW] Push notification:', event.data?.json ? event.data.json().notification : null);
+  });
+
   messaging.onBackgroundMessage((payload) => {
-    console.log('[SW] 11. Recebida mensagem em background', payload);
+    console.log('[SW] 12. Recebida mensagem em background (Firebase onBackgroundMessage)', payload);
+    console.log('[SW] Background message payload:', JSON.stringify(payload, null, 2));
     const notificationTitle = payload.notification?.title || 'Gabi Manicure';
     const notificationOptions = {
       body: payload.notification?.body || 'Nova notificação',
@@ -45,17 +53,20 @@ try {
       renotify: true,
       data: payload.data || {},
     };
+    console.log('[SW] 13. Chamando self.registration.showNotification() com opções:', JSON.stringify(notificationOptions, null, 2));
     self.registration.showNotification(notificationTitle, notificationOptions);
+    console.log('[SW] 14. showNotification() chamado com sucesso!');
   });
 
   self.addEventListener('notificationclick', (event) => {
-    console.log('[SW] 12. Clique na notificação', event);
+    console.log('[SW] 15. Clique na notificação! Timestamp:', new Date().toISOString());
+    console.log('[SW] Notification click event:', JSON.stringify(event, null, 2));
     event.notification.close();
     const url = (event.notification.data && event.notification.data.url) || '/';
     event.waitUntil(clients.openWindow(url));
   });
 
-  console.log("[SW] 13. Tudo carregado com sucesso!");
+  console.log("[SW] 16. Tudo carregado com sucesso!");
 
 } catch (error) {
   console.error("[SW] ERRO CRÍTICO NO SERVICE WORKER!", error);

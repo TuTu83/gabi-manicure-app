@@ -4,6 +4,7 @@ import {
   collection,
   deleteDoc,
   doc,
+  getDocs,
   limit,
   onSnapshot,
   orderBy,
@@ -11,6 +12,7 @@ import {
   setDoc,
   updateDoc,
   where,
+  arrayUnion,
 } from 'firebase/firestore';
 import { getFirebaseDb, isFirebaseConfigured, removeUndefinedFields } from '@/services/firebase';
 import { consumeRateLimit } from '@/services/storage';
@@ -305,7 +307,7 @@ export async function updateUserFcmToken(userId: string, fcmToken: string): Prom
   try {
     // ArrayUnion para adicionar token sem duplicatas
     await updateDoc(doc(db, 'users', userId), {
-      fcmTokens: (await import('firebase/firestore')).arrayUnion(fcmToken),
+      fcmTokens: arrayUnion(fcmToken),
       updatedAt: Date.now()
     });
     // Mantemos o campo fcmToken para retrocompatibilidade
@@ -317,40 +319,65 @@ export async function updateUserFcmToken(userId: string, fcmToken: string): Prom
 }
 
 export async function getAdminFcmTokens(): Promise<string[]> {
+  console.log('[FCM DEBUG] getAdminFcmTokens() INICIO');
   if (!isFirebaseConfigured()) {
-    console.warn('[Admin] Firebase not configured, no admin tokens');
+    console.warn('[FCM DEBUG] Firebase not configured, no admin tokens');
     return [];
   }
   const db = getFirebaseDb();
   if (!db) {
-    console.warn('[Admin] DB not available, no admin tokens');
+    console.warn('[FCM DEBUG] DB not available, no admin tokens');
     return [];
   }
   try {
-    const q = query(
-      collection(db, 'users'), 
-      where('email', '==', ADMIN_EMAIL)
-    );
-    const snap = await (await import('firebase/firestore')).getDocs(q);
-    const tokens: string[] = [];
+    console.log('[FCM DEBUG] Buscando todos os usuários na coleção users');
+    const snap = await getDocs(collection(db, 'users'));
+    console.log('[FCM DEBUG] Total de usuários encontrados:', snap.size);
+    
+    const tokensSet = new Set<string>();
+    const adminUsers = [];
+    
     snap.forEach(doc => {
       const data = doc.data() as any;
-      // Prioriza o array de tokens, mas mantém compatibilidade com campo único
-      if (data.fcmTokens && Array.isArray(data.fcmTokens)) {
-        data.fcmTokens.forEach((token: string) => {
-          if (!tokens.includes(token)) {
-            tokens.push(token);
-          }
+      const email = (data.email || '').toLowerCase();
+      const isAdminUser = (data.role === 'admin') || (email === ADMIN_EMAIL.toLowerCase());
+      
+      if (isAdminUser) {
+        adminUsers.push({
+          id: doc.id,
+          email: data.email,
+          role: data.role,
+          hasFcmToken: !!data.fcmToken,
+          fcmTokensCount: Array.isArray(data.fcmTokens) ? data.fcmTokens.length : 0
         });
-      }
-      if (data.fcmToken && !tokens.includes(data.fcmToken)) {
-        tokens.push(data.fcmToken);
+        
+        if (data.fcmTokens && Array.isArray(data.fcmTokens)) {
+          console.log('[FCM DEBUG] Processando fcmTokens[] do admin:', data.email, data.fcmTokens.length, 'tokens');
+          data.fcmTokens.forEach((token: string) => {
+            if (token) {
+              tokensSet.add(token);
+              console.log('[FCM DEBUG] Adicionando token do array:', token.substring(0, 15) + '...');
+            }
+          });
+        }
+        if (data.fcmToken) {
+          console.log('[FCM DEBUG] Processando fcmToken do admin:', data.email);
+          tokensSet.add(data.fcmToken);
+          console.log('[FCM DEBUG] Adicionando token único:', data.fcmToken.substring(0, 15) + '...');
+        }
       }
     });
-    console.log('[Admin] Admin FCM tokens found:', tokens.length, tokens.map(t => `${t.substring(0,10)}...`));
+    
+    console.log('[FCM DEBUG] Usuários admin encontrados:', adminUsers);
+    
+    const tokens = Array.from(tokensSet);
+    console.log('[FCM DEBUG] total tokens:', tokens.length);
+    console.log('[FCM DEBUG] tokens:', tokens);
+    console.log('[FCM DEBUG] getAdminFcmTokens() FIM');
+    
     return tokens;
   } catch (error) {
-    console.error('[Admin] falha ao obter tokens FCM do admin', error);
+    console.error('[FCM DEBUG] falha ao obter tokens FCM do admin', error);
     return [];
   }
 }

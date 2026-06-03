@@ -27,6 +27,19 @@ self.addEventListener('fetch', (event) => {
   const req = event.request;
   if (req.method !== 'GET') return;
   const url = new URL(req.url);
+  
+  // Allow cross-origin requests for Firebase CDNs, gstatic, etc.
+  const ALLOWED_CROSS_ORIGINS = [
+    'https://www.gstatic.com',
+    'https://firebasestorage.googleapis.com',
+    'https://firebaseappcheck.googleapis.com',
+    'https://www.googleapis.com'
+  ];
+  
+  if (ALLOWED_CROSS_ORIGINS.some(origin => url.href.startsWith(origin))) {
+    return; // Don't intercept these, let browser handle normally
+  }
+  
   if (url.origin !== self.location.origin) return;
 
   if (req.mode === 'navigate') {

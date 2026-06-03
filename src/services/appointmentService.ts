@@ -470,6 +470,11 @@ export async function createAppointment(input: Omit<Appointment, 'id' | 'created
   try {
     const adminFcmTokens = await getAdminFcmTokens();
     
+    console.log(
+      '[PUSH DEBUG] Tokens encontrados:', 
+      adminFcmTokens
+    );
+    
     const dateStr = dayjs(startAt).format('DD/MM/YYYY');
     const timeStr = dayjs(startAt).format('HH:mm');
     
