@@ -211,7 +211,8 @@ const DashboardPage: React.FC = () => {
       getFcmTokenErrorFull: rawDebugStore.getFcmTokenErrorFull ?? null,
       firebaseDiagnostic: rawDebugStore.firebaseDiagnostic ?? null,
       firebaseSdkStatus: rawDebugStore.firebaseSdkStatus ?? null,
-      registrationStatus: currentToken || rawDebugStore.fcmToken || rawDebugStore.getFcmToken ? 'registered' : 'not_registered'
+      registrationStatus: currentToken || rawDebugStore.fcmToken || rawDebugStore.getFcmToken ? 'registered' : 'not_registered',
+      getAdminFcmTokens: rawDebugStore.getAdminFcmTokens ?? null
     }));
 
     setIsLoading(false);
@@ -1009,6 +1010,94 @@ ${data.pushDiagnostics.getFcmTokenError}
           ) : (
             <Text style={{ fontSize: '13px', color: '#ef4444', textAlign: 'center' }}>Carregando...</Text>
           )}
+        </View>
+      </Card>
+
+      {/* Nova seção: Fluxo de Envio */}
+      <Card title="Fluxo de Envio" icon="📤">
+        <View style={{ gap: '16px' }}>
+          {/* 1. getAdminFcmTokens() */}
+          <View style={{ gap: '8px' }}>
+            <Text style={{ fontSize: '14px', fontWeight: '700', color: '#111827' }}>1. getAdminFcmTokens()</Text>
+            {pushDiagnostics.getAdminFcmTokens ? (
+              <View style={{ gap: '8px' }}>
+                {pushDiagnostics.getAdminFcmTokens.error ? (
+                  <View style={{ padding: '10px', backgroundColor: '#fef2f2', borderRadius: '8px', border: '1px solid #fecaca' }}>
+                    <Text style={{ fontSize: '12px', color: '#dc2626', fontWeight: '700' }}>Erro:</Text>
+                    <Text style={{ fontSize: '12px', color: '#dc2626' }} selectable>{pushDiagnostics.getAdminFcmTokens.error}</Text>
+                  </View>
+                ) : (
+                  <>
+                    <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: '8px' }}>
+                      <Badge label="Total Users" status={String(pushDiagnostics.getAdminFcmTokens.totalUsers)} />
+                      <Badge label="Admins Found" status={String(pushDiagnostics.getAdminFcmTokens.adminCount)} />
+                      <Badge label="Tokens Found" status={String(pushDiagnostics.getAdminFcmTokens.tokenCount)} />
+                    </View>
+                    {pushDiagnostics.getAdminFcmTokens.maskedTokens?.length > 0 && (
+                      <>
+                        <Text style={{ fontSize: '13px', fontWeight: '600', color: '#374151' }}>Tokens (mascarados):</Text>
+                        <View style={{ flexDirection: 'column', gap: '4px' }}>
+                          {pushDiagnostics.getAdminFcmTokens.maskedTokens.map((token: string, index: number) => (
+                            <Text key={index} style={{ fontSize: '12px', color: '#374151', fontFamily: 'monospace' }} selectable>
+                              - {token}
+                            </Text>
+                          ))}
+                        </View>
+                      </>
+                    )}
+                    {pushDiagnostics.getAdminFcmTokens.adminUsers?.length > 0 && (
+                      <JsonPreview data={pushDiagnostics.getAdminFcmTokens.adminUsers} label="Admin Users" />
+                    )}
+                  </>
+                )}
+              </View>
+            ) : (
+              <Text style={{ fontSize: '13px', color: '#6b7280' }}>Nenhuma execução registrada</Text>
+            )}
+          </View>
+
+          {/* 2. Última Chamada API */}
+          <View style={{ gap: '8px' }}>
+            <Text style={{ fontSize: '14px', fontWeight: '700', color: '#111827' }}>2. Última Chamada à API</Text>
+            {debugData.lastApiCall ? (
+              <View style={{ gap: '8px' }}>
+                <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: '8px' }}>
+                  <Badge label="Status" status={typeof debugData.lastApiCall.status === 'number' ? (debugData.lastApiCall.status < 300 ? 'OK' : 'ERRO') : String(debugData.lastApiCall.status)} />
+                  {debugData.lastApiCall.response?.tokensReceivedCount && <Badge label="Tokens Recebidos API" status={String(debugData.lastApiCall.response.tokensReceivedCount)} />}
+                  {debugData.lastApiCall.response?.sent && <Badge label="Enviados com Sucesso" status={String(debugData.lastApiCall.response.sent)} />}
+                </View>
+                
+                {debugData.lastApiCall.response?.payloadReceived && (
+                  <JsonPreview data={debugData.lastApiCall.response.payloadReceived} label="Payload Recebido pela API" />
+                )}
+                
+                {debugData.lastApiCall.response?.successTokens?.length > 0 && (
+                  <JsonPreview data={debugData.lastApiCall.response.successTokens} label="Tokens com Sucesso" />
+                )}
+                
+                {debugData.lastApiCall.response?.failureTokens?.length > 0 && (
+                  <JsonPreview data={debugData.lastApiCall.response.failureTokens} label="Tokens com Falha" />
+                )}
+                
+                {debugData.lastApiCall.response?.invalidTokensRemoved?.length > 0 && (
+                  <JsonPreview data={debugData.lastApiCall.response.invalidTokensRemoved} label="Tokens Inválidos Removidos" />
+                )}
+                
+                {debugData.lastApiCall.response?.fullResult && (
+                  <JsonPreview data={debugData.lastApiCall.response.fullResult} label="Resultado Completo do FCM" />
+                )}
+                
+                {debugData.lastApiCall.error && (
+                  <View style={{ padding: '10px', backgroundColor: '#fef2f2', borderRadius: '8px', border: '1px solid #fecaca' }}>
+                    <Text style={{ fontSize: '12px', color: '#dc2626', fontWeight: '700' }}>Erro na Chamada API:</Text>
+                    <Text style={{ fontSize: '12px', color: '#dc2626' }} selectable>{String(debugData.lastApiCall.error)}</Text>
+                  </View>
+                )}
+              </View>
+            ) : (
+              <Text style={{ fontSize: '13px', color: '#6b7280' }}>Nenhuma chamada à API registrada</Text>
+            )}
+          </View>
         </View>
       </Card>
 

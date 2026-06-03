@@ -320,13 +320,25 @@ export async function updateUserFcmToken(userId: string, fcmToken: string): Prom
 
 export async function getAdminFcmTokens(): Promise<string[]> {
   console.log('[FCM DEBUG] getAdminFcmTokens() INICIO');
+  // Save to debug push
+  if (typeof window !== 'undefined') {
+    (window as any).__DEBUG_PUSH__ = (window as any).__DEBUG_PUSH__ || { logs: [], lastSent: null, lastReceived: null, lastError: null, lastTokenUpdate: null };
+    (window as any).__DEBUG_PUSH__.getAdminFcmTokens = { started: true, timestamp: Date.now() };
+  }
+  
   if (!isFirebaseConfigured()) {
     console.warn('[FCM DEBUG] Firebase not configured, no admin tokens');
+    if (typeof window !== 'undefined') {
+      (window as any).__DEBUG_PUSH__.getAdminFcmTokens.error = 'Firebase not configured';
+    }
     return [];
   }
   const db = getFirebaseDb();
   if (!db) {
     console.warn('[FCM DEBUG] DB not available, no admin tokens');
+    if (typeof window !== 'undefined') {
+      (window as any).__DEBUG_PUSH__.getAdminFcmTokens.error = 'DB not available';
+    }
     return [];
   }
   try {
@@ -336,6 +348,7 @@ export async function getAdminFcmTokens(): Promise<string[]> {
     
     const tokensSet = new Set<string>();
     const adminUsers = [];
+    const maskedTokens = [];
     
     snap.forEach(doc => {
       const data = doc.data() as any;
@@ -356,6 +369,7 @@ export async function getAdminFcmTokens(): Promise<string[]> {
           data.fcmTokens.forEach((token: string) => {
             if (token) {
               tokensSet.add(token);
+              maskedTokens.push(token.substring(0, 10) + '...');
               console.log('[FCM DEBUG] Adicionando token do array:', token.substring(0, 15) + '...');
             }
           });
@@ -363,6 +377,9 @@ export async function getAdminFcmTokens(): Promise<string[]> {
         if (data.fcmToken) {
           console.log('[FCM DEBUG] Processando fcmToken do admin:', data.email);
           tokensSet.add(data.fcmToken);
+          if (!maskedTokens.includes(data.fcmToken.substring(0, 10) + '...')) {
+            maskedTokens.push(data.fcmToken.substring(0, 10) + '...');
+          }
           console.log('[FCM DEBUG] Adicionando token único:', data.fcmToken.substring(0, 15) + '...');
         }
       }
@@ -375,9 +392,25 @@ export async function getAdminFcmTokens(): Promise<string[]> {
     console.log('[FCM DEBUG] tokens:', tokens);
     console.log('[FCM DEBUG] getAdminFcmTokens() FIM');
     
+    // Save to debug push
+    if (typeof window !== 'undefined') {
+      (window as any).__DEBUG_PUSH__.getAdminFcmTokens = {
+        completed: true,
+        totalUsers: snap.size,
+        adminCount: adminUsers.length,
+        tokenCount: tokens.length,
+        maskedTokens,
+        adminUsers,
+        timestamp: Date.now()
+      };
+    }
+    
     return tokens;
   } catch (error) {
     console.error('[FCM DEBUG] falha ao obter tokens FCM do admin', error);
+    if (typeof window !== 'undefined') {
+      (window as any).__DEBUG_PUSH__.getAdminFcmTokens.error = String(error);
+    }
     return [];
   }
 }

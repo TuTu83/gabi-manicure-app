@@ -216,11 +216,29 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       }
     }
 
-    // 5. Return success response (EXACT format as required)
+    // 5. Return success response with full details
+    const successTokens = [];
+    const failureTokens = [];
+    for (let i = 0; i < fcmResult.responses.length; i++) {
+      const response = fcmResult.responses[i];
+      const token = fcmTokens[i];
+      if (response.success) {
+        successTokens.push({ token: token.substring(0, 10) + '...', messageId: response.messageId });
+      } else {
+        failureTokens.push({ token: token.substring(0, 10) + '...', errorCode: response.error?.code, errorMessage: response.error?.message });
+      }
+    }
+    
     return res.status(200).json({
       success: true,
       sent: fcmResult.successCount,
-      message: "Notifications processed successfully"
+      message: "Notifications processed successfully",
+      fullResult: fcmResult,
+      successTokens,
+      failureTokens,
+      invalidTokensRemoved: invalidTokens.map(t => t.substring(0, 10) + '...'),
+      tokensReceivedCount: fcmTokens.length,
+      payloadReceived: { title, body, data }
     });
 
   } catch (error) {
