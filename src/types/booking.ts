@@ -93,13 +93,32 @@ export interface WaitlistEntry {
   createdAt: number;
 }
 
+export type NegotiationStatus = 'pending' | 'accepted' | 'rejected' | 'counter_offer' | 'completed';
+
+export interface AppointmentNegotiation {
+  id: string;
+  appointmentId: string;
+  clientId: string;
+  adminId: string;
+  status: NegotiationStatus;
+  newStartAt: number; // timestamp in ms
+  newEndAt: number; // timestamp in ms
+  message?: string;
+  createdAt: number;
+  updatedAt: number;
+}
+
 export type NotificationType =
   | 'confirmacao_agendamento'
   | 'lembrete_agendamento'
   | 'inicio_agendamento'
   | 'alteracao_agendamento'
   | 'cancelamento_agendamento'
-  | 'cliente_a_caminho';
+  | 'cliente_a_caminho'
+  | 'proposta_alteracao_horario'
+  | 'resposta_proposta_aceita'
+  | 'resposta_proposta_recusada'
+  | 'contraproposta_horario';
 
 export interface InAppNotification {
   id: string;

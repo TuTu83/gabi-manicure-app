@@ -26,9 +26,10 @@ import { createNotification, requestNotificationPermission, showSystemNotificati
 import { updateAppSettings } from '@/services/settingsService';
 import { uploadImageFromPath } from '@/services/uploadService';
 import { openAdminWhatsApp } from '@/services/whatsappService';
+import { createNegotiation, getNegotiationsByAppointmentId, acceptNegotiation } from '@/services/negotiationService';
 import { useAppStore } from '@/store/appStore';
 import { formatPhoneBRDisplay } from '@/utils/validators';
-import type { Appointment, AppointmentStatus, InAppNotification, Professional, Promotion, ServiceItem } from '@/types/booking';
+import type { Appointment, AppointmentStatus, InAppNotification, Professional, Promotion, ServiceItem, AppointmentNegotiation } from '@/types/booking';
 import type { PaymentMethod, PaymentRecord } from '@/types/finance';
 import type { UserProfile } from '@/types/user';
 import styles from './index.module.scss';
@@ -129,6 +130,12 @@ function AdminPage() {
   const [rescheduleDateMs, setRescheduleDateMs] = useState<number>(() => Date.now());
   const [rescheduleSlotStartAt, setRescheduleSlotStartAt] = useState<number | null>(null);
   const [paymentOpen, setPaymentOpen] = useState(false);
+  const [negotiationModalOpen, setNegotiationModalOpen] = useState(false);
+  const [negotiationDateMs, setNegotiationDateMs] = useState<number>(() => Date.now());
+  const [negotiationSlots, setNegotiationSlots] = useState<Array<{ startAt: number; endAt: number; disabled: boolean }>>([]);
+  const [negotiationSlotStartAt, setNegotiationSlotStartAt] = useState<number | null>(null);
+  const [negotiationMessage, setNegotiationMessage] = useState('');
+  const [appointmentNegotiations, setAppointmentNegotiations] = useState<AppointmentNegotiation[]>([]);
   const [paymentAmount, setPaymentAmount] = useState('0');
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>('pix');
   const [exporting, setExporting] = useState(false);
@@ -494,10 +501,88 @@ function AdminPage() {
     };
   }, [dayAppointments, monthAppointments, professionals.length, settings.businessHours.closeHour, settings.businessHours.openHour, users]);
 
-  const openAppointment = (a: Appointment) => {
+  const openAppointment = async (a: Appointment) => {
     setAppointmentSelected(a);
     setAppointmentNotesValue(a.notes || '');
+    
+    // Load existing negotiations
+    const negotiations = await getNegotiationsByAppointmentId(a.id);
+    setAppointmentNegotiations(negotiations);
+    
     setAppointmentModalOpen(true);
+  };
+
+  const handleOpenNegotiation = async () => {
+    if (!appointmentSelected) return;
+    setNegotiationDateMs(appointmentSelected.startAt);
+    setNegotiationSlotStartAt(null);
+    setNegotiationMessage('');
+    
+    // Build slots for negotiation
+    const slots = buildSlotsForDay({
+      dayMs: negotiationDateMs,
+      services: [appointmentSelected],
+      professionals,
+      appointments: dayAppointments,
+      settings,
+      excludeAppointmentId: appointmentSelected.id,
+    });
+    
+    setNegotiationSlots(slots);
+    setNegotiationModalOpen(true);
+  };
+
+  const handleCreateNegotiation = async () => {
+    if (!appointmentSelected || !currentUser || !negotiationSlotStartAt) return;
+    
+    await runSafe(async () => {
+      const newEndAt = negotiationSlotStartAt + (appointmentSelected.totalDurationMinutes || appointmentSelected.durationMinutes) * 60 * 1000;
+      
+      await createNegotiation({
+        appointmentId: appointmentSelected.id,
+        clientId: appointmentSelected.userId,
+        adminId: currentUser.uid,
+        newStartAt: negotiationSlotStartAt,
+        newEndAt,
+        message: negotiationMessage.trim() || undefined,
+      });
+
+      if (currentUser) {
+        createAdminLog({
+          actor: currentUser,
+          action: 'create_negotiation',
+          entityType: 'appointment',
+          entityId: appointmentSelected.id,
+          summary: `Proposta de alteração de horário criada para: ${appointmentSelected.userName}`,
+          meta: { 
+            newStartAt: negotiationSlotStartAt,
+            newEndAt,
+            message: negotiationMessage.trim() 
+          },
+        });
+      }
+
+      Taro.showToast({ title: 'Proposta enviada', icon: 'success' });
+      setNegotiationModalOpen(false);
+      
+      // Reload negotiations
+      const negotiations = await getNegotiationsByAppointmentId(appointmentSelected.id);
+      setAppointmentNegotiations(negotiations);
+    });
+  };
+
+  const handleAcceptNegotiation = async (negotiation: AppointmentNegotiation) => {
+    if (!appointmentSelected) return;
+    
+    await runSafe(async () => {
+      await acceptNegotiation(negotiation, appointmentSelected);
+      
+      Taro.showToast({ title: 'Alteração confirmada', icon: 'success' });
+      
+      // Reload negotiations
+      const negotiations = await getNegotiationsByAppointmentId(appointmentSelected.id);
+      setAppointmentNegotiations(negotiations);
+    });
   };
 
   const runSafe = async (fn: () => Promise<void>) => {
@@ -1886,6 +1971,9 @@ function AdminPage() {
             </View>
 
             <View className={styles.modalActions}>
+              <Button className={styles.modalBtn} onClick={handleOpenNegotiation}>
+                <Text className={styles.modalBtnText}>Solicitar alteração de horário</Text>
+              </Button>
               <Button className={styles.modalBtn} onClick={handleOpenReschedule}>
                 <Text className={styles.modalBtnText}>Reagendar</Text>
               </Button>
@@ -1893,6 +1981,55 @@ function AdminPage() {
                 <Text className={classnames(styles.modalBtnText, styles.dangerText)}>Cancelar</Text>
               </Button>
             </View>
+
+            {/* Existing negotiations */}
+            {appointmentNegotiations.length > 0 && (
+              <View style={{ marginTop: '24rpx' }}>
+                <Text className={styles.fieldLabel}>Propostas de alteração</Text>
+                {appointmentNegotiations.map((n) => (
+                  <View 
+                    key={n.id}
+                    className={styles.listItem}
+                    style={{ marginBottom: '12rpx' }}
+                  >
+                    <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+                      <Text style={{ fontSize: '14px', fontWeight: '600' }}>
+                        {formatDateLabel(n.newStartAt)} às {formatTime(n.newStartAt)}
+                      </Text>
+                      <View className={classnames(
+                        styles.badge,
+                        n.status === 'accepted' && styles.badgePrimary,
+                        n.status === 'completed' && styles.badgePrimary,
+                        n.status === 'rejected' && styles.badgeDanger,
+                        n.status === 'counter_offer' && styles.badgeWarning
+                      )}>
+                        <Text className={styles.badgeText}>
+                          {n.status === 'pending' ? 'Pendente' :
+                           n.status === 'accepted' ? 'Aceita' :
+                           n.status === 'rejected' ? 'Recusada' :
+                           n.status === 'counter_offer' ? 'Contraproposta' : 'Concluída'}
+                        </Text>
+                      </View>
+                    </View>
+                    {n.message && (
+                      <Text style={{ fontSize: '13px', marginTop: '8rpx', color: '#666' }}>
+                        {n.message}
+                      </Text>
+                    )}
+                    {(n.status === 'accepted') && (
+                      <Button
+                        className={classnames(styles.modalBtn, styles.modalBtnPrimary)}
+                        style={{ marginTop: '12rpx' }}
+                        disabled={busy}
+                        onClick={() => handleAcceptNegotiation(n)}
+                      >
+                        <Text className={styles.modalBtnTextWhite}>Confirmar alteração</Text>
+                      </Button>
+                    )}
+                  </View>
+                ))}
+              </View>
+            )}
 
             <View className={styles.modalActions}>
               <Button className={styles.modalBtn} onClick={handleOpenPaymentFinalize}>
@@ -1969,6 +2106,84 @@ function AdminPage() {
               </Button>
               <Button className={classnames(styles.modalBtn, styles.modalBtnPrimary)} disabled={busy} onClick={handleConfirmReschedule}>
                 <Text className={styles.modalBtnTextWhite}>Confirmar</Text>
+              </Button>
+            </View>
+          </View>
+        </View>
+      ) : null}
+
+      {negotiationModalOpen ? (
+        <View className={styles.modalMask} onClick={() => setNegotiationModalOpen(false)}>
+          <View className={styles.modalCard} onClick={(e) => e.stopPropagation()}>
+            <Text className={styles.modalTitle}>Solicitar alteração de horário</Text>
+            <Text className={styles.modalDesc}>Escolha uma nova data e horário para propor ao cliente.</Text>
+
+            <Text className={styles.fieldLabel}>Data</Text>
+            <View className={styles.inputRow}>
+              <Picker
+                mode="date"
+                value={toISODate(negotiationDateMs)}
+                onChange={(e) => {
+                  const next = new Date(`${e.detail.value}T00:00:00`).getTime();
+                  setNegotiationDateMs(next);
+                  // Rebuild slots for the new date
+                  if (appointmentSelected) {
+                    const slots = buildSlotsForDay({
+                      dayMs: next,
+                      services: [appointmentSelected],
+                      professionals,
+                      appointments: dayAppointments,
+                      settings,
+                      excludeAppointmentId: appointmentSelected.id,
+                    });
+                    setNegotiationSlots(slots);
+                  }
+                  setNegotiationSlotStartAt(null);
+                }}
+              >
+                <Text className={styles.listSub}>{formatDateLabel(negotiationDateMs)}</Text>
+              </Picker>
+            </View>
+
+            <Text className={styles.fieldLabel}>Horário</Text>
+            <ScrollView scrollY style={{ maxHeight: '420rpx' }}>
+              <View className={styles.badgeRow} style={{ marginTop: 0 }}>
+                {negotiationSlots.map((s) => {
+                  const active = negotiationSlotStartAt === s.startAt;
+                  return (
+                    <Button
+                      key={`negotiation_slot_${s.startAt}`}
+                      className={classnames(styles.pill, active && styles.badgePrimary)}
+                      disabled={s.disabled}
+                      onClick={() => setNegotiationSlotStartAt(s.startAt)}
+                    >
+                      <Text className={classnames(styles.pillText, active && styles.badgePrimaryText)}>{formatTime(s.startAt)}</Text>
+                    </Button>
+                  );
+                })}
+              </View>
+            </ScrollView>
+
+            <Text className={styles.fieldLabel}>Mensagem (opcional)</Text>
+            <View className={styles.inputRow}>
+              <Input 
+                className={styles.input} 
+                value={negotiationMessage} 
+                onInput={(e) => setNegotiationMessage(e.detail.value)} 
+                placeholder="Adicione uma mensagem para o cliente"
+              />
+            </View>
+
+            <View className={styles.modalActions}>
+              <Button className={styles.modalBtn} onClick={() => setNegotiationModalOpen(false)}>
+                <Text className={styles.modalBtnText}>Voltar</Text>
+              </Button>
+              <Button 
+                className={classnames(styles.modalBtn, styles.modalBtnPrimary)} 
+                disabled={busy || !negotiationSlotStartAt} 
+                onClick={handleCreateNegotiation}
+              >
+                <Text className={styles.modalBtnTextWhite}>Enviar proposta</Text>
               </Button>
             </View>
           </View>
