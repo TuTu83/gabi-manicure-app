@@ -159,6 +159,7 @@ export async function sendFcmNotification({
         'Content-Type': 'application/json'
       };
       
+      console.log('ANTES DO FETCH');
       // Logs imediatamente antes do fetch
       console.log('URL:', apiUrl);
       console.log('método:', method);
@@ -173,6 +174,7 @@ export async function sendFcmNotification({
         credentials: 'omit',
       });
 
+      console.log('DEPOIS DO FETCH');
       console.log('STATUS:', response.status);
       
       const text = await response.text();
@@ -206,7 +208,7 @@ export async function sendFcmNotification({
       return result;
       
     } catch (error) {
-      console.error('FETCH ERROR', {
+      console.error('FETCH ERROR COMPLETO', {
         message: error?.message,
         stack: error?.stack,
         name: error?.name
@@ -507,6 +509,7 @@ export async function createAppointment(input: Omit<Appointment, 'id' | 'created
   }
 
   // Send FCM notifications
+  console.log('=== FLUXO AGENDAMENTO ===');
   console.log('[FLOW] CHEGOU NO ENVIO DE NOTIFICAÇÃO');
   console.log('[AGENDAMENTO] Iniciando envio de notificação');
   console.log('[AGENDAMENTO] appointmentId:', appointment.id);
@@ -559,6 +562,8 @@ export async function createAppointment(input: Omit<Appointment, 'id' | 'created
     const tokensToSend: string[] = [...adminFcmTokens];
     const maskedTokens = tokensToSend.map(t => `${t.substring(0,10)}...`);
     
+    console.log('TOKENS ENCONTRADOS:', tokensToSend);
+    console.log('TOKEN COUNT:', tokensToSend?.length);
     console.log('[createAppointment] Tokens to send:', maskedTokens);
     
     // Update lastSendFlow with token info
@@ -589,6 +594,9 @@ export async function createAppointment(input: Omit<Appointment, 'id' | 'created
           url: '/pages/admin/index',
         },
       };
+
+      console.log('URL API:', apiUrl);
+      console.log('PAYLOAD:', payload);
       
       if (typeof window !== 'undefined') {
         (window as any).__DEBUG_PUSH__.lastSendFlow.payloadSent = payload;
