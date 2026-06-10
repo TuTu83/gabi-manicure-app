@@ -2,7 +2,9 @@ import Taro from '@tarojs/taro';
 import type { UserProfile } from '@/types/user';
 import { normalizePhoneBRToE164 } from '@/utils/validators';
 import { getFirebaseAuth, getFirebaseDb, isFirebaseConfigured } from '@/services/firebase';
-import { collection, doc, getDoc, getDocs, limit, query, setDoc, where } from 'firebase/firestore';
+import { ADMIN_EMAIL } from '@/services/adminService';
+import { clearAppStorage, useAppStore } from '@/store/appStore';
+import { collection, doc, getDoc, getDocs, limit, query, setDoc, updateDoc, where } from 'firebase/firestore';
 import {
   GoogleAuthProvider,
   createUserWithEmailAndPassword,
@@ -186,6 +188,14 @@ export async function registerWithEmailPassword(input: {
   try {
     const result = await createUserWithEmailAndPassword(auth, email, input.password);
     const now = Date.now();
+    
+    // LOGS DETALHADOS
+    console.log('[AUTH DEBUG REGISTER]');
+    console.log('  email:', email);
+    console.log('  ADMIN_EMAIL:', ADMIN_EMAIL);
+    console.log('  email === ADMIN_EMAIL.toLowerCase()', email === ADMIN_EMAIL.toLowerCase());
+    
+    const isAdmin = email === ADMIN_EMAIL.toLowerCase();
     const profile: UserProfile = {
       id: result.user.uid,
       fullName: name,
@@ -193,8 +203,11 @@ export async function registerWithEmailPassword(input: {
       email,
       provider: 'password',
       createdAt: now,
-      role: 'user',
+      role: isAdmin ? 'admin' : 'client',
     };
+    
+    console.log('  isAdmin:', isAdmin);
+    console.log('  profile.role:', profile.role);
 
     await setDoc(
       doc(db, 'users', profile.id),
@@ -264,28 +277,63 @@ export async function restoreSignedInProfile(): Promise<UserProfile | null> {
   if (!auth.currentUser) return null;
 
   try {
-    const snap = await getDoc(doc(db, 'users', auth.currentUser.uid));
-    if (snap.exists()) return snap.data() as UserProfile;
-    const now = Date.now();
-    const profile: UserProfile = {
-      id: auth.currentUser.uid,
-      fullName: auth.currentUser.displayName || 'Cliente',
-      phoneE164: auth.currentUser.phoneNumber || '',
-      email: auth.currentUser.email || undefined,
-      provider: 'password',
-      createdAt: now,
-      role: 'user',
-    };
-    await setDoc(
-      doc(db, 'users', profile.id),
-      {
-        ...profile,
-        name: profile.fullName,
-        phone: profile.phoneE164 || '',
+    const userId = auth.currentUser.uid;
+    const snap = await getDoc(doc(db, 'users', userId));
+    const email = auth.currentUser.email || '';
+    
+    // LOGS DETALHADOS
+    console.log('[AUTH DEBUG RESTORE]');
+    console.log('  userId:', userId);
+    console.log('  email:', email);
+    console.log('  ADMIN_EMAIL:', ADMIN_EMAIL);
+    console.log('  email.toLowerCase() === ADMIN_EMAIL.toLowerCase()', email.toLowerCase() === ADMIN_EMAIL.toLowerCase());
+    
+    const isAdmin = email.toLowerCase() === ADMIN_EMAIL.toLowerCase();
+    const correctRole = isAdmin ? 'admin' : 'client';
+    
+    console.log('  isAdmin:', isAdmin);
+    console.log('  correctRole:', correctRole);
+    
+    let profile: UserProfile;
+    
+    if (snap.exists()) {
+      const existingData = snap.data() as UserProfile;
+      console.log('  existingData:', existingData);
+      console.log('  existingData.role:', existingData.role);
+      
+      // SEMPRE ATUALIZA A ROLE SE DIFERENTE (CORRIGE DADOS ANTIGOS!)
+      if (existingData.role !== correctRole) {
+        console.log('[restoreSignedInProfile] Atualizando role do usuário para:', correctRole);
+        await setDoc(doc(db, 'users', userId), { role: correctRole, updatedAt: Date.now() }, { merge: true });
+        profile = { ...existingData, role: correctRole };
+      } else {
+        profile = existingData;
+      }
+    } else {
+      // Cria novo usuário com role correta
+      const now = Date.now();
+      profile = {
+        id: userId,
+        fullName: auth.currentUser.displayName || 'Cliente',
+        phoneE164: auth.currentUser.phoneNumber || '',
+        email: auth.currentUser.email || undefined,
+        provider: 'password',
         createdAt: now,
-      } as any,
-      { merge: true },
-    );
+        role: correctRole,
+      };
+      await setDoc(
+        doc(db, 'users', profile.id),
+        {
+          ...profile,
+          name: profile.fullName,
+          phone: profile.phoneE164 || '',
+          createdAt: now,
+        } as any,
+        { merge: true },
+      );
+    }
+    
+    console.log('  final profile.role:', profile.role);
     return profile;
   } catch (error) {
     console.error('[Auth] falha ao restaurar sessão', error);
@@ -305,20 +353,53 @@ export async function signInWithGoogleH5(): Promise<UserProfile> {
   const provider = new GoogleAuthProvider();
   const result = await signInWithPopup(auth, provider);
 
-  const profileRef = doc(db, 'users', result.user.uid);
+  const userId = result.user.uid;
+  const profileRef = doc(db, 'users', userId);
   const snap = await getDoc(profileRef);
-  if (snap.exists()) return snap.data() as UserProfile;
-
-  const displayName = result.user.displayName || '';
-  const profile: UserProfile = {
-    id: result.user.uid,
-    fullName: displayName || 'Cliente',
-    phoneE164: '',
-    email: result.user.email || undefined,
-    provider: 'google',
-    createdAt: Date.now(),
-  };
-  await setDoc(profileRef, profile, { merge: true });
+  const email = result.user.email || '';
+  
+  // LOGS DETALHADOS
+  console.log('[AUTH DEBUG GOOGLE SIGN IN]');
+  console.log('  userId:', userId);
+  console.log('  email:', email);
+  console.log('  ADMIN_EMAIL:', ADMIN_EMAIL);
+  console.log('  email.toLowerCase() === ADMIN_EMAIL.toLowerCase()', email.toLowerCase() === ADMIN_EMAIL.toLowerCase());
+  
+  const isAdmin = email.toLowerCase() === ADMIN_EMAIL.toLowerCase();
+  const correctRole = isAdmin ? 'admin' : 'client';
+  
+  console.log('  isAdmin:', isAdmin);
+  console.log('  correctRole:', correctRole);
+  
+  let profile: UserProfile;
+  
+  if (snap.exists()) {
+    const existingData = snap.data() as UserProfile;
+    console.log('  existingData:', existingData);
+    console.log('  existingData.role:', existingData.role);
+    
+    if (existingData.role !== correctRole) {
+      console.log('[signInWithGoogleH5] Atualizando role do usuário para:', correctRole);
+      await setDoc(doc(db, 'users', userId), { role: correctRole, updatedAt: Date.now() }, { merge: true });
+      profile = { ...existingData, role: correctRole };
+    } else {
+      profile = existingData;
+    }
+  } else {
+    const displayName = result.user.displayName || '';
+    profile = {
+      id: userId,
+      fullName: displayName || 'Cliente',
+      phoneE164: '',
+      email: result.user.email || undefined,
+      provider: 'google',
+      createdAt: Date.now(),
+      role: correctRole,
+    };
+    await setDoc(profileRef, profile, { merge: true });
+  }
+  
+  console.log('  final profile.role:', profile.role);
   return profile;
 }
 
@@ -366,11 +447,30 @@ export async function sendPasswordResetEmailLink(emailRaw: string): Promise<void
 }
 
 export async function signOut(): Promise<void> {
+  // Primeiro limpa tudo localmente!
+  try {
+    // Limpa o store do app
+    useAppStore.getState().signOut();
+    // Limpa completamente o storage do app
+    clearAppStorage();
+    console.log('[AUTH DEBUG] Limpou useAppStore e storage local');
+  } catch (err) {
+    console.error('[AUTH DEBUG] Erro ao limpar dados locais no logout:', err);
+  }
+
+  // Agora faz logout do Firebase
   if (isFirebaseConfigured()) {
     const auth = getFirebaseAuth();
     if (auth) {
       try {
+        const userId = auth.currentUser?.uid;
+        if (userId) {
+          console.log('[AUTH DEBUG] Removendo token FCM para:', userId);
+          const { removeCurrentUserToken } = await import('./pushService');
+          await removeCurrentUserToken(userId);
+        }
         await firebaseSignOut(auth);
+        console.log('[AUTH DEBUG] Logout Firebase finalizado');
       } catch (error) {
         console.error('[Auth] falha ao sair no Firebase', error);
       }

@@ -197,7 +197,8 @@ const initializeWebPush = async (userId?: string): Promise<void> => {
     let existingSWRegistrations: ServiceWorkerRegistration[] = [];
     if (hasServiceWorkerAPI) {
       try {
-        existingSWRegistrations = await navigator.serviceWorker.getRegistrations();
+        const readonlyRegistrations = await navigator.serviceWorker.getRegistrations();
+        existingSWRegistrations = [...readonlyRegistrations];
         log('[initializeWebPush] Service Workers existentes', {
           count: existingSWRegistrations.length,
           scopes: existingSWRegistrations.map(r => r.scope),
@@ -372,7 +373,10 @@ const addNativeListeners = (userId?: string) => {
   tokenListener = PushNotifications.addListener(
     'registration',
     async (token: Token) => {
-      log('Token FCM recebido (nativo)', { token: token.value.substring(0, 20) + '...' });
+      log('✅ [DIAGNÓSTICO 1] Token FCM recebido (nativo)', {
+        tokenCompleto: token.value, // Mostra token completo para diagnóstico
+        userId: userId || currentUserId
+      });
       saveTokenLocal(token.value);
       if (userId || currentUserId) {
         await saveTokenToFirebase(token.value, userId || currentUserId!);
@@ -384,15 +388,15 @@ const addNativeListeners = (userId?: string) => {
   errorListener = PushNotifications.addListener(
     'registrationError',
     (error: any) => {
-      logError('Erro no registro de push (nativo)', error);
+      logError('❌ [DIAGNÓSTICO 1] Erro no registro de push (nativo)', error);
     }
   );
 
-  // Listener de notificação recebida com app aberto
+  // Listener de notificação recebida com app aberto (FOREGROUND)
   notificationListener = PushNotifications.addListener(
     'pushNotificationReceived',
     async (notification: PushNotificationSchema) => {
-      log('Notificação recebida com app aberto (nativo)', notification);
+      log('✅ [DIAGNÓSTICO 2] Notificação recebida em FOREGROUND (nativo)', notification);
       if (typeof window !== 'undefined') {
         (window as any).__DEBUG_PUSH__ = (window as any).__DEBUG_PUSH__ || { logs: [], lastSent: null, lastReceived: null, lastError: null, lastTokenUpdate: null };
         (window as any).__DEBUG_PUSH__.lastReceived = notification;
@@ -400,6 +404,7 @@ const addNativeListeners = (userId?: string) => {
       
       // Mostra a notificação como banner mesmo com app aberto
       try {
+        log('🔄 [DIAGNÓSTICO 2] Tentando exibir notificação local...');
         await (PushNotifications as any).localNotification({
           title: notification.title || 'Nova Notificação',
           body: notification.body || '',
@@ -409,9 +414,9 @@ const addNativeListeners = (userId?: string) => {
           channelId: ANDROID_CHANNEL_ID,
           data: notification.data
         });
-        log('Notificação local exibida (nativo)');
+        log('✅ [DIAGNÓSTICO 2] Notificação local exibida com sucesso!');
       } catch (localError) {
-        logError('Erro ao exibir notificação local (nativo)', localError);
+        logError('❌ [DIAGNÓSTICO 2] Erro ao exibir notificação local (nativo)', localError);
       }
     }
   );
@@ -420,7 +425,7 @@ const addNativeListeners = (userId?: string) => {
   actionListener = PushNotifications.addListener(
     'pushNotificationActionPerformed',
     (action: ActionPerformed) => {
-      log('Ação de notificação executada (nativo)', action);
+      log('✅ [DIAGNÓSTICO 2] Ação de notificação executada (clicada)', action);
       handleNotificationAction(action);
     }
   );
@@ -453,7 +458,12 @@ const addWebListeners = () => {
  */
 const createAndroidChannel = async () => {
   try {
-    log('Criando canal Android de notificações');
+    log('🔄 [DIAGNÓSTICO 4] Criando canal Android de notificações', {
+      channelId: ANDROID_CHANNEL_ID,
+      importance: 5,
+      sound: 'default',
+      vibration: true
+    });
     await PushNotifications.createChannel({
       id: ANDROID_CHANNEL_ID,
       name: 'Notificações Gabi Manicure',
@@ -464,9 +474,9 @@ const createAndroidChannel = async () => {
       visibility: 1, // Visível na tela de bloqueio
       lights: true,
     });
-    log('Canal Android criado com sucesso');
+    log('✅ [DIAGNÓSTICO 4] Canal Android criado com sucesso!');
   } catch (error) {
-    logError('Erro ao criar canal Android', error);
+    logError('❌ [DIAGNÓSTICO 4] Erro ao criar canal Android', error);
   }
 };
 
@@ -534,6 +544,41 @@ export const cleanupPushListeners = () => {
   if (actionListener?.remove) actionListener.remove();
   if (fcmMessageUnsubscribe) fcmMessageUnsubscribe();
   isInitialized = false;
+  currentToken = null;
+  currentUserId = null;
+};
+
+/**
+ * Remove o token FCM do usuário atual (usado no logout)
+ */
+export const removeCurrentUserToken = async (userId: string) => {
+  try {
+    log('Removendo token FCM do usuário no logout');
+    const token = currentToken || getTokenLocal();
+    
+    if (token) {
+      const { removeUserFcmToken } = await import('./adminService');
+      await removeUserFcmToken(userId, token);
+      log('Token FCM removido com sucesso do usuário:', userId);
+    }
+    
+    // Limpa o token local
+    try {
+      if (Capacitor.isNativePlatform()) {
+        Taro.removeStorageSync(LOCAL_TOKEN_KEY);
+      } else if (typeof window !== 'undefined' && window.localStorage) {
+        window.localStorage.removeItem(LOCAL_TOKEN_KEY);
+      }
+    } catch (e) {
+      logError('Erro ao remover token do armazenamento local', e);
+    }
+    
+    currentToken = null;
+    currentUserId = null;
+    cleanupPushListeners();
+  } catch (error) {
+    logError('Erro ao remover token no logout', error);
+  }
 };
 
 /**

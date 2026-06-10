@@ -4,7 +4,13 @@ import Taro from '@tarojs/taro';
 import { Capacitor } from '@capacitor/core';
 import { PushNotifications } from '@capacitor/push-notifications';
 import { initializePushNotifications, getCurrentFcmToken, checkPushPermissions } from '../../services/pushService';
-import { getFirebaseMessaging, getFcmToken, onFcmMessage, firebaseConfig as exportedFirebaseConfig, getDiagnosticFirebaseConfig } from '../../services/firebase';
+import { getFirebaseMessaging, getFcmToken, onFcmMessage, firebaseConfig as exportedFirebaseConfig, getDiagnosticFirebaseConfig, getFirebaseAuth } from '../../services/firebase';
+import { sendFcmNotification, testPing } from '../../services/appointmentService';
+import { testFetchMinimum } from '../../test-fetch.js';
+import { getAdminFcmTokens, getAllClientFcmTokens, ADMIN_EMAIL } from '../../services/adminService';
+import { collection, getDocs, getDoc, doc, setDoc } from 'firebase/firestore';
+import { getFirebaseDb } from '../../services/firebase';
+import { useAppStore } from '../../store/appStore';
 
 type LogType = 'ERROR' | 'WARN' | 'INFO' | 'SUCCESS';
 
@@ -38,7 +44,6 @@ interface PushDiagnostics {
 }
 
 const DashboardPage: React.FC = () => {
-  
   const [debugData, setDebugData] = useState<{
     logs: LogItem[];
     lastSent: any;
@@ -77,6 +82,7 @@ const DashboardPage: React.FC = () => {
   const [isLoading, setIsLoading] = useState(true);
   const [diagnosticFirebaseConfig, setDiagnosticFirebaseConfig] = useState<any>(null);
   const [exportedFirebaseConfigMasked, setExportedFirebaseConfigMasked] = useState<any>(null);
+  const [tokenDiagnostics, setTokenDiagnostics] = useState<any>(null);
 
   const runCompleteDiagnostic = async () => {
     await refreshDebugData();
@@ -127,7 +133,6 @@ const DashboardPage: React.FC = () => {
     let debugStore = defaultDebugStore;
     if (isBrowser) {
       const rawDebugStore = (window as any).__DEBUG_PUSH__ || {};
-      // Ensure all required fields exist and are correct type
       debugStore = {
         logs: Array.isArray(rawDebugStore.logs) ? rawDebugStore.logs : [],
         lastSent: rawDebugStore.lastSent || null,
@@ -141,14 +146,12 @@ const DashboardPage: React.FC = () => {
     }
     setDebugData(debugStore);
 
-    // Get Firebase config diagnostic data
     setDiagnosticFirebaseConfig(getDiagnosticFirebaseConfig());
     
-    // Mask the exported firebaseConfig
     const maskVal = (v: string) => {
       const val = String(v || '');
       if (!val) return '';
-      const suffix = val.length <=4 ? val : val.slice(-4);
+      const suffix = val.length <= 4 ? val : val.slice(-4);
       return `***${suffix} (len=${val.length})`;
     };
     setExportedFirebaseConfigMasked({
@@ -160,7 +163,7 @@ const DashboardPage: React.FC = () => {
     });
 
     setCapacitorDiagnostics({
-      isNative: isNative,
+      isNative,
       platform: Capacitor.getPlatform(),
       windowCapacitor: isBrowser ? (window as any).Capacitor : null,
       plugins: isNative ? (Capacitor as any).Plugins : null,
@@ -266,7 +269,7 @@ const DashboardPage: React.FC = () => {
         Taro.showToast({ title: 'Não foi possível copiar o token', icon: 'none' });
       }
     } catch (error) {
-      Taro.showToast({ title: 'Erro ao copiar', icon: 'none' });
+      Taro.showToast({ title: 'Erro ao copiar token', icon: 'none' });
     }
   };
 
@@ -387,7 +390,7 @@ const DashboardPage: React.FC = () => {
   const JsonPreview = ({ data, label }: { data: any; label: string }) => {
     return (
       <View style={{ gap: '8px' }}>
-        <Text style={{ fontSize: '13px', color: '#6b7280' }}>{label}</Text>
+        <Text style={{ fontSize: '14px', color: '#6b7280' }}>{label}</Text>
         <Text style={{ 
           fontSize: '11px', 
           color: '#374151', 
@@ -415,6 +418,622 @@ const DashboardPage: React.FC = () => {
       Taro.showToast({ title: 'Erro ao limpar logs', icon: 'none' });
     }
   };
+
+  const testPushAdmin = async () => {
+    try {
+      Taro.showToast({ title: 'Buscando tokens admin...', icon: 'none' });
+      const adminTokens = await getAdminFcmTokens();
+      
+      if (adminTokens.length === 0) {
+        Taro.showToast({ title: 'Nenhum token admin!', icon: 'none' });
+        return;
+      }
+
+      Taro.showToast({ title: 'Enviando push teste admin...', icon: 'none' });
+      const result = await sendFcmNotification({
+        title: 'TESTE PUSH ADMIN',
+        body: 'Se você recebeu isso, o FCM Android está funcionando!',
+        fcmTokens: [adminTokens[0]],
+        data: { type: 'teste_admin' }
+      });
+      console.log('Resultado teste push admin:', result);
+      Taro.showToast({ title: 'Envio concluído!', icon: 'success' });
+    } catch (error) {
+      console.error('Erro teste push admin:', error);
+      Taro.showToast({ title: 'Erro no teste!', icon: 'none' });
+    }
+  };
+
+  const testPushClient = async () => {
+    try {
+      Taro.showToast({ title: 'Buscando tokens cliente...', icon: 'none' });
+      const clientTokens = await getAllClientFcmTokens();
+      
+      if (clientTokens.length === 0) {
+        Taro.showToast({ title: 'Nenhum token cliente!', icon: 'none' });
+        return;
+      }
+
+      Taro.showToast({ title: 'Enviando push teste cliente...', icon: 'none' });
+      const result = await sendFcmNotification({
+        title: 'TESTE PUSH CLIENTE',
+        body: 'Se você recebeu isso, o FCM Android está funcionando!',
+        fcmTokens: [clientTokens[0]],
+        data: { type: 'teste_cliente' }
+      });
+      console.log('Resultado teste push cliente:', result);
+      Taro.showToast({ title: 'Envio concluído!', icon: 'success' });
+    } catch (error) {
+      console.error('Erro teste push cliente:', error);
+      Taro.showToast({ title: 'Erro no teste!', icon: 'none' });
+    }
+  };
+
+  const fetchAllTokensDiagnostic = async () => {
+    try {
+      Taro.showToast({ title: 'Coletando dados...', icon: 'none' });
+      
+      const db = getFirebaseDb();
+      if (!db) throw new Error('DB não disponível');
+      
+      const snap = await getDocs(collection(db, 'users'));
+      
+      const allTokens: Array<{
+        userId: string;
+        email: string | null;
+        role: string | null;
+        tokens: string[];
+        singularToken: string | null;
+        fullDocument: any;
+        isAdmin: boolean;
+      }> = [];
+      
+      const duplicateTokensMap = new Map<string, string[]>();
+      let adminUser: any = null;
+      
+      snap.forEach(doc => {
+        const data = doc.data() as any;
+        const email = (data.email || '').toLowerCase();
+        const isAdmin = (data.role === 'admin') || (email === ADMIN_EMAIL.toLowerCase());
+        
+        if (isAdmin && !adminUser) {
+          adminUser = {
+            userId: doc.id,
+            ...data
+          };
+        }
+        
+        const userTokens: string[] = [];
+        if (Array.isArray(data.fcmTokens)) {
+          data.fcmTokens.forEach((token: string) => {
+            if (token && token.trim()) {
+              userTokens.push(token.trim());
+              if (!duplicateTokensMap.has(token.trim())) {
+                duplicateTokensMap.set(token.trim(), []);
+              }
+              duplicateTokensMap.get(token.trim())!.push(doc.id);
+            }
+          });
+        }
+        if (data.fcmToken && data.fcmToken.trim()) {
+          userTokens.push(data.fcmToken.trim());
+          if (!duplicateTokensMap.has(data.fcmToken.trim())) {
+            duplicateTokensMap.set(data.fcmToken.trim(), []);
+          }
+          duplicateTokensMap.get(data.fcmToken.trim())!.push(doc.id);
+        }
+        
+        allTokens.push({
+          userId: doc.id,
+          email: data.email || null,
+          role: data.role || null,
+          tokens: Array.from(new Set(userTokens)),
+          singularToken: data.fcmToken || null,
+          fullDocument: data,
+          isAdmin
+        });
+      });
+      
+      const duplicateTokens: Array<{token: string, users: string[]}> = [];
+      duplicateTokensMap.forEach((users, token) => {
+        if (users.length > 1) {
+          duplicateTokens.push({ token, users });
+        }
+      });
+      
+      const adminTokens = allTokens.filter(u => u.isAdmin).flatMap(u => u.tokens);
+      const clientTokens = allTokens.filter(u => !u.isAdmin).flatMap(u => u.tokens);
+      
+      const currentUserToken = getCurrentFcmToken();
+      const tokenExistsInFirestore = currentUserToken && (
+        adminTokens.includes(currentUserToken) ||
+        clientTokens.includes(currentUserToken)
+      );
+      
+      setTokenDiagnostics({
+        totalUsers: snap.size,
+        allTokens,
+        duplicateTokens,
+        adminTokens,
+        clientTokens,
+        currentUserToken,
+        tokenExistsInFirestore,
+        adminUser,
+        collectedAt: Date.now()
+      });
+      
+      console.log('=== RELATÓRIO DE TOKENS FCM ===');
+      console.log('Total de usuários:', snap.size);
+      console.log('Admin User Full Document:', adminUser);
+      console.log('Tokens Admin:', adminTokens);
+      console.log('Tokens Clientes:', clientTokens);
+      console.log('Tokens Duplicados:', duplicateTokens);
+      
+      Taro.showToast({ title: 'Diagnóstico concluído!', icon: 'success' });
+    } catch (error) {
+      console.error('Erro no diagnóstico de tokens:', error);
+      Taro.showToast({ title: `Erro: ${String(error)}`, icon: 'none' });
+    }
+  };
+
+  const testCurrentAdminTokenPush = async () => {
+    try {
+      const currentToken = getCurrentFcmToken();
+      if (!currentToken) {
+        Taro.showToast({ title: 'Nenhum token FCM disponível', icon: 'none' });
+        return;
+      }
+
+      Taro.showToast({ title: 'Enviando push para token atual...', icon: 'none' });
+      
+      console.log('=== TESTE PUSH PARA TOKEN ATUAL ADMIN ===');
+      console.log('Token:', currentToken);
+      
+      const result = await sendFcmNotification({
+        title: 'TESTE PUSH ADMIN TOKEN ATUAL',
+        body: 'Notificação de teste para o token atual do admin!',
+        fcmTokens: [currentToken],
+        data: { type: 'admin_test_current_token' }
+      });
+      
+      console.log('Resultado da Cloud Function:', result);
+      Taro.showToast({ title: 'Push enviado!', icon: 'success' });
+    } catch (error) {
+      console.error('Erro no teste do token atual:', error);
+      Taro.showToast({ title: `Erro: ${String(error)}`, icon: 'none' });
+    }
+  };
+
+  const testCloudFunctionConnectivity = async () => {
+    try {
+      Taro.showToast({ title: 'Iniciando testes...', icon: 'none' });
+      console.log('===========================================');
+      console.log('1. TESTE DE CONECTIVIDADE BÁSICA');
+      console.log('===========================================');
+      
+      console.log('1.1 Testando fetch para google.com...');
+      try {
+        const googleTest = await fetch('https://www.google.com', {
+          mode: 'no-cors'
+        });
+        console.log('✅ Fetch para Google OK (modo no-cors)!');
+      } catch (googleErr) {
+        console.error('❌ Erro no teste Google:', googleErr);
+      }
+
+      Taro.showToast({ title: 'Testando API...', icon: 'none' });
+      
+      const apiUrl = 'https://gabi-manicure-app.vercel.app/api/send-notification';
+      
+      const payload = {
+        test: true,
+        title: 'TESTE DE CONECTIVIDADE',
+        body: 'Não enviar notificação',
+        fcmTokens: ['test-token'],
+        data: { test: true }
+      };
+
+      console.log('===========================================');
+      console.log('2. TESTE DA API DO GABI');
+      console.log('===========================================');
+      console.log('URL:', apiUrl);
+      console.log('Payload:', payload);
+      console.log('Capacitor.isNativePlatform:', typeof Capacitor !== 'undefined' ? Capacitor.isNativePlatform() : 'false');
+      console.log('navigator.onLine:', navigator.onLine);
+
+      console.log('--- Teste 1: fetch básico ---');
+      let response;
+      try {
+        response = await fetch(apiUrl, {
+          method: 'POST',
+          headers: {
+            'Accept': 'application/json',
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify(payload),
+          mode: 'cors',
+          credentials: 'omit',
+        });
+        console.log('✅ Fetch OK! Status:', response.status);
+      } catch (fetchErr) {
+        console.error('❌ Erro no fetch:', fetchErr);
+        console.error('Erro nome:', (fetchErr as any).name);
+        console.error('Erro mensagem:', (fetchErr as any).message);
+        console.error('Erro stack:', (fetchErr as any).stack);
+        throw new Error(`Fetch falhou: ${(fetchErr as any).message}`);
+      }
+
+      const rawText = await response.text();
+      console.log('Resposta bruta:', rawText);
+
+      let result: any;
+      try {
+        result = JSON.parse(rawText);
+      } catch (parseErr) {
+        result = { rawText };
+      }
+
+      const success = response.ok;
+
+      if (typeof window !== 'undefined') {
+        const debugWindow = window as any;
+        if (!debugWindow.__DEBUG_PUSH__) {
+          debugWindow.__DEBUG_PUSH__ = { logs: [], lastSent: null, lastReceived: null, lastError: null, lastApiCall: null };
+        }
+        debugWindow.__DEBUG_PUSH__.lastConnectivityTest = {
+          url: apiUrl,
+          payload,
+          status: response.status,
+          statusText: response.statusText,
+          response: result,
+          success: success,
+          timestamp: new Date().toISOString()
+        };
+      }
+
+      Taro.showToast({ 
+        title: success 
+          ? `OK (${response.status})` 
+          : `ERRO (${response.status})`, 
+        icon: success ? 'success' : 'none' 
+      });
+    } catch (error) {
+      console.error('===========================================');
+      console.error('3. ERRO GERAL NO TESTE DE CONECTIVIDADE');
+      console.error('===========================================');
+      console.error('Erro:', error);
+      console.error('Mensagem:', (error as any)?.message);
+      console.error('Stack:', (error as any)?.stack);
+
+      Taro.showToast({ title: `Erro: ${(error as any)?.message}`, icon: 'none' });
+    }
+  };
+
+  const runFullConnectivityDiagnostic = async () => {
+    try {
+      Taro.showToast({ title: 'Iniciando diagnóstico completo...', icon: 'none' });
+      console.log('===========================================');
+      console.log('DIAGNÓSTICO DE CONECTIVIDADE COMPLETO');
+      console.log('===========================================');
+
+      const testResults: any = {};
+
+      // TESTE 1: Google
+      console.log('\n===========================================');
+      console.log('TESTE 1: https://www.google.com');
+      console.log('===========================================');
+      try {
+        const url = 'https://www.google.com';
+        const method = 'GET';
+        const headers = { 'Accept': 'text/html,application/xhtml+xml' };
+        console.log('URL:', url);
+        console.log('MÉTODO:', method);
+        console.log('HEADERS:', headers);
+
+        const response = await fetch(url, { method, headers, mode: 'no-cors' });
+        const status = response.status;
+        console.log('STATUS:', status);
+        
+        const body = await response.text();
+        console.log('BODY (primeiros 200 chars):', body.substring(0, 200));
+
+        testResults.google = { url, method, headers, status, body: body.substring(0, 200), success: true };
+      } catch (error) {
+        console.error('ERROR MESSAGE:', (error as any)?.message);
+        console.error('ERROR NAME:', (error as any)?.name);
+        console.error('STACK:', (error as any)?.stack);
+        testResults.google = { 
+          url: 'https://www.google.com', 
+          method: 'GET', 
+          headers: { 'Accept': 'text/html,application/xhtml+xml' }, 
+          success: false, 
+          errorMessage: (error as any)?.message, 
+          errorName: (error as any)?.name, 
+          stack: (error as any)?.stack 
+        };
+      }
+
+      // TESTE 2: Vercel homepage
+      console.log('\n===========================================');
+      console.log('TESTE 2: https://gabi-manicure-app.vercel.app');
+      console.log('===========================================');
+      try {
+        const url = 'https://gabi-manicure-app.vercel.app';
+        const method = 'GET';
+        const headers = { 'Accept': 'text/html,application/xhtml+xml' };
+        console.log('URL:', url);
+        console.log('MÉTODO:', method);
+        console.log('HEADERS:', headers);
+
+        const response = await fetch(url, { method, headers, mode: 'cors', credentials: 'omit' });
+        const status = response.status;
+        console.log('STATUS:', status);
+        
+        const body = await response.text();
+        console.log('BODY (primeiros 200 chars):', body.substring(0, 200));
+
+        testResults.vercelHomepage = { url, method, headers, status, body: body.substring(0, 200), success: true };
+      } catch (error) {
+        console.error('ERROR MESSAGE:', (error as any)?.message);
+        console.error('ERROR NAME:', (error as any)?.name);
+        console.error('STACK:', (error as any)?.stack);
+        testResults.vercelHomepage = { 
+          url: 'https://gabi-manicure-app.vercel.app', 
+          method: 'GET', 
+          headers: { 'Accept': 'text/html,application/xhtml+xml' }, 
+          success: false, 
+          errorMessage: (error as any)?.message, 
+          errorName: (error as any)?.name, 
+          stack: (error as any)?.stack 
+        };
+      }
+
+      // TESTE 3: API Ping
+      console.log('\n===========================================');
+      console.log('TESTE 3: https://gabi-manicure-app.vercel.app/api/ping');
+      console.log('===========================================');
+      try {
+        const url = 'https://gabi-manicure-app.vercel.app/api/ping';
+        const method = 'GET';
+        const headers = { 'Accept': 'application/json' };
+        console.log('URL:', url);
+        console.log('MÉTODO:', method);
+        console.log('HEADERS:', headers);
+
+        const response = await fetch(url, { method, headers, mode: 'cors', credentials: 'omit' });
+        const status = response.status;
+        console.log('STATUS:', status);
+        
+        const body = await response.text();
+        console.log('BODY:', body);
+
+        testResults.vercelPing = { url, method, headers, status, body, success: true };
+      } catch (error) {
+        console.error('ERROR MESSAGE:', (error as any)?.message);
+        console.error('ERROR NAME:', (error as any)?.name);
+        console.error('STACK:', (error as any)?.stack);
+        testResults.vercelPing = { 
+          url: 'https://gabi-manicure-app.vercel.app/api/ping', 
+          method: 'GET', 
+          headers: { 'Accept': 'application/json' }, 
+          success: false, 
+          errorMessage: (error as any)?.message, 
+          errorName: (error as any)?.name, 
+          stack: (error as any)?.stack 
+        };
+      }
+
+      console.log('\n===========================================');
+      console.log('RESULTADOS FINAIS:');
+      console.log('===========================================');
+      console.log(testResults);
+
+      // Salvar na página de debug
+      if (typeof window !== 'undefined') {
+        const debugWindow = window as any;
+        if (!debugWindow.__DEBUG_PUSH__) {
+          debugWindow.__DEBUG_PUSH__ = { logs: [], lastSent: null, lastReceived: null, lastError: null, lastApiCall: null };
+        }
+        debugWindow.__DEBUG_PUSH__.fullConnectivityDiagnostic = testResults;
+      }
+
+      // Determinar cenário
+      let scenario = '';
+      if (!testResults.google.success) {
+        scenario = 'CENÁRIO A (Problema de rede/WebView Android)';
+      } else if (!testResults.vercelHomepage.success || !testResults.vercelPing.success) {
+        scenario = 'CENÁRIO B (Problema de DNS/SSL/configuração Android para o domínio)';
+      } else {
+        scenario = 'CENÁRIO C (Problema específico da API send-notification)';
+      }
+
+      Taro.showToast({ title: 'Diagnóstico concluído!', icon: 'success' });
+      console.log('CENÁRIO IDENTIFICADO:', scenario);
+
+      await refreshDebugData();
+
+    } catch (error) {
+      console.error('===========================================');
+      console.error('ERRO NO DIAGNÓSTICO DE CONECTIVIDADE');
+      console.error('===========================================');
+      console.error('Erro:', error);
+      console.error('Mensagem:', (error as any)?.message);
+      console.error('Stack:', (error as any)?.stack);
+
+      // Salvar erro na página de debug
+      if (typeof window !== 'undefined') {
+        const debugWindow = window as any;
+        if (!debugWindow.__DEBUG_PUSH__) {
+          debugWindow.__DEBUG_PUSH__ = { logs: [], lastSent: null, lastReceived: null, lastError: null, lastApiCall: null };
+        }
+        debugWindow.__DEBUG_PUSH__.fullConnectivityDiagnostic = {
+          error: String(error),
+          timestamp: new Date().toISOString()
+        };
+      }
+
+      Taro.showToast({ title: `Erro: ${(error as any)?.message}`, icon: 'none' });
+      await refreshDebugData();
+    }
+  };
+
+  const testApiPing = async () => {
+    try {
+      Taro.showToast({ title: 'Testando /api/ping...', icon: 'none' });
+      
+      // Usar a função testPing de appointmentService
+      const result = await testPing();
+      
+      // Salvar na página de debug
+      if (typeof window !== 'undefined') {
+        const debugWindow = window as any;
+        if (!debugWindow.__DEBUG_PUSH__) {
+          debugWindow.__DEBUG_PUSH__ = { logs: [], lastSent: null, lastReceived: null, lastError: null, lastApiCall: null };
+        }
+        debugWindow.__DEBUG_PUSH__.lastPingTest = {
+          url: 'https://gabi-manicure-app.vercel.app/api/ping',
+          status: result.status,
+          statusText: String(result.status),
+          response: result.body,
+          success: result.status === 200,
+          timestamp: new Date().toISOString()
+        };
+      }
+
+      Taro.showToast({ 
+        title: result.status === 200 
+          ? `OK (${result.status})` 
+          : `ERRO (${result.status})`, 
+        icon: result.status === 200 ? 'success' : 'none' 
+      });
+
+      await refreshDebugData();
+
+    } catch (error) {
+      console.error('===========================================');
+      console.error('ERRO NO TESTE /api/ping');
+      console.error('===========================================');
+      console.error('Erro:', error);
+      console.error('Mensagem:', (error as any)?.message);
+      console.error('Stack:', (error as any)?.stack);
+
+      // Salvar erro na página de debug
+      if (typeof window !== 'undefined') {
+        const debugWindow = window as any;
+        if (!debugWindow.__DEBUG_PUSH__) {
+          debugWindow.__DEBUG_PUSH__ = { logs: [], lastSent: null, lastReceived: null, lastError: null, lastApiCall: null };
+        }
+        debugWindow.__DEBUG_PUSH__.lastPingTest = {
+          url: 'https://gabi-manicure-app.vercel.app/api/ping',
+          status: 'error',
+          statusText: 'Erro',
+          response: null,
+          success: false,
+          timestamp: new Date().toISOString(),
+          error: String(error)
+        };
+      }
+
+      Taro.showToast({ title: `Erro: ${(error as any)?.message}`, icon: 'none' });
+      await refreshDebugData();
+    }
+  };
+
+  const testSendNotificationDirect = async () => {
+    try {
+      Taro.showToast({ title: 'Testando send-notification...', icon: 'none' });
+      console.log('===========================================');
+      console.log('TESTE /api/send-notification DIRETO');
+      console.log('===========================================');
+
+      const currentToken = pushDiagnostics.fcmToken;
+
+      if (!currentToken) {
+        Taro.showToast({ title: 'Nenhum token FCM disponível!', icon: 'none' });
+        return;
+      }
+
+      const apiUrl = 'https://gabi-manicure-app.vercel.app/api/send-notification';
+      const payload = {
+        title: 'TESTE DIRETO',
+        body: 'Notificação direta para token atual',
+        fcmTokens: [currentToken],
+        data: { test: true }
+      };
+
+      console.log('URL:', apiUrl);
+      console.log('Payload:', payload);
+
+      let response;
+      try {
+        response = await fetch(apiUrl, {
+          method: 'POST',
+          headers: {
+            'Accept': 'application/json',
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify(payload),
+          mode: 'cors',
+          credentials: 'omit',
+        });
+        console.log('✅ Fetch OK! Status:', response.status);
+      } catch (fetchErr) {
+        console.error('❌ Erro no fetch:', fetchErr);
+        console.error('Erro nome:', (fetchErr as any).name);
+        console.error('Erro mensagem:', (fetchErr as any).message);
+        console.error('Erro stack:', (fetchErr as any).stack);
+        throw new Error(`Fetch falhou: ${(fetchErr as any).message}`);
+      }
+
+      const rawText = await response.text();
+      console.log('Resposta bruta:', rawText);
+
+      let result: any;
+      try {
+        result = JSON.parse(rawText);
+      } catch (parseErr) {
+        result = { rawText };
+      }
+
+      const success = response.ok;
+
+      if (typeof window !== 'undefined') {
+        const debugWindow = window as any;
+        if (!debugWindow.__DEBUG_PUSH__) {
+          debugWindow.__DEBUG_PUSH__ = { logs: [], lastSent: null, lastReceived: null, lastError: null, lastApiCall: null };
+        }
+        debugWindow.__DEBUG_PUSH__.lastSendNotificationDirectTest = {
+          url: apiUrl,
+          payload,
+          status: response.status,
+          statusText: response.statusText,
+          response: result,
+          success: success,
+          timestamp: new Date().toISOString()
+        };
+      }
+
+      Taro.showToast({ 
+        title: success 
+          ? `OK (${response.status})` 
+          : `ERRO (${response.status})`, 
+        icon: success ? 'success' : 'none' 
+      });
+
+      await refreshDebugData();
+
+    } catch (error) {
+      console.error('===========================================');
+      console.error('ERRO NO TESTE send-notification DIRETO');
+      console.error('===========================================');
+      console.error('Erro:', error);
+      console.error('Mensagem:', (error as any)?.message);
+      console.error('Stack:', (error as any)?.stack);
+
+      Taro.showToast({ title: `Erro: ${(error as any)?.message}`, icon: 'none' });
+    }
+  };
+
 
   const collectAllDiagnostics = () => {
     const now = new Date();
@@ -447,7 +1066,6 @@ const DashboardPage: React.FC = () => {
         await navigator.clipboard.writeText(text);
         Taro.showToast({ title: 'Copiado com sucesso!', icon: 'success' });
       } else {
-        // Fallback para navegadores antigos ou ambientes não-browser
         const textArea = document.createElement('textarea');
         textArea.value = text;
         textArea.style.position = 'fixed';
@@ -700,6 +1318,16 @@ ${data.pushDiagnostics.getFcmTokenError}
       <Card title="Ações Rápidas" icon="⚙️">
         <View style={{ gap: '8px' }}>
           <View style={{ flexDirection: 'row', gap: '8px', flexWrap: 'wrap' }}>
+          <ActionButton onClick={testPushAdmin} variant="primary">🔔 TESTE PUSH ADMIN</ActionButton>
+          <ActionButton onClick={testPushClient} variant="primary">🔔 TESTE PUSH CLIENTE</ActionButton>
+          <ActionButton onClick={testCurrentAdminTokenPush} variant="primary">🎯 TESTE PUSH TOKEN ATUAL ADMIN</ActionButton>
+          <ActionButton onClick={testCloudFunctionConnectivity} variant="primary">🔌 TESTE CONECTIVIDADE CF</ActionButton>
+          <ActionButton onClick={testApiPing} variant="primary">🟢 TESTE API PING</ActionButton>
+          <ActionButton onClick={runFullConnectivityDiagnostic} variant="primary">🌐 DIAGNÓSTICO CONECTIVIDADE COMPLETO</ActionButton>
+          <ActionButton onClick={testSendNotificationDirect} variant="primary">📤 TESTE SEND NOTIFICATION</ActionButton>
+          <ActionButton onClick={fetchAllTokensDiagnostic} variant="primary">📊 DIAGNÓSTICO DE TOKENS</ActionButton>
+        </View>
+          <View style={{ flexDirection: 'row', gap: '8px', flexWrap: 'wrap' }}>
             <ActionButton onClick={copyEverything}>📋 COPIAR TUDO</ActionButton>
             <ActionButton onClick={copyFullDiagnosticReport}>📝 COPIAR DIAGNÓSTICO COMPLETO</ActionButton>
           </View>
@@ -789,7 +1417,6 @@ ${data.pushDiagnostics.getFcmTokenError}
 
       <Card title="Diagnóstico de Envio" icon="📤">
         <View style={{ gap: '12px' }}>
-          {/* Tokens encontrados */}
           {debugData.lastApiCall?.payload?.fcmTokens && debugData.lastApiCall.payload.fcmTokens.length > 0 ? (
             <View style={{ gap: '8px' }}>
               <Text style={{ fontSize: '14px', fontWeight: 'bold', color: '#111827' }}>
@@ -817,827 +1444,243 @@ ${data.pushDiagnostics.getFcmTokenError}
             </View>
           ) : (
             <Text style={{ fontSize: '14px', color: '#6b7280' }}>
-              ⚠️ Nenhum token encontrado na última chamada
+              Nenhum token encontrado no último fluxo.
             </Text>
           )}
+        </View>
+      </Card>
 
-          {/* Último payload */}
-          {debugData.lastApiCall?.payload && (
-            <JsonPreview data={debugData.lastApiCall.payload} label="📦 Último payload enviado" />
-          )}
-
-          {/* Última resposta da API */}
-          {debugData.lastApiCall?.response && (
-            <View style={{ gap: '8px' }}>
-              <Text style={{ fontSize: '14px', fontWeight: 'bold', color: '#111827' }}>
-                📨 Última chamada para /api/send-notification
-              </Text>
-
-              <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: '12px' }}>
-                <Badge
-                  label="SuccessCount"
-                  status={debugData.lastApiCall.response.successCount}
-                  color={debugData.lastApiCall.response.successCount > 0 ? '#10b981' : '#6b7280'}
-                />
-                <Badge
-                  label="FailureCount"
-                  status={debugData.lastApiCall.response.failureCount}
-                  color={debugData.lastApiCall.response.failureCount > 0 ? '#ef4444' : '#6b7280'}
-                />
-              </View>
-
-              {debugData.lastApiCall.response.responses && (
+      <Card title="Último Teste /api/ping" icon="🟢">
+        <View style={{ gap: '12px' }}>
+          {(() => {
+            const debugWindow = typeof window !== 'undefined' ? (window as any).__DEBUG_PUSH__ : null;
+            const lastPingTest = debugWindow?.lastPingTest;
+            if (lastPingTest) {
+              return (
                 <View style={{ gap: '8px' }}>
-                  <Text style={{ fontSize: '13px', fontWeight: 'bold', color: '#111827' }}>
-                    Resultado por token:
+                  <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: '12px' }}>
+                    <Badge label="Status HTTP" status={lastPingTest.status} color={String(lastPingTest.status).startsWith('2') ? '#10b981' : '#ef4444'} />
+                  </View>
+                  <Text style={{ fontSize: '11px', color: '#6b7280' }}>
+                    🕒 {new Date(lastPingTest.timestamp).toLocaleString('pt-BR')}
                   </Text>
-                  {debugData.lastApiCall.response.responses.map((r: any, index: number) => (
-                    <View
-                      key={index}
-                      style={{
-                        padding: '8px 12px',
-                        borderRadius: '8px',
-                        backgroundColor: r.success ? '#ecfdf5' : '#fef2f2',
-                        borderLeftWidth: '4px',
-                        borderLeftColor: r.success ? '#10b981' : '#ef4444',
-                        borderLeftStyle: 'solid'
-                      }}
-                    >
-                      <Text
-                        style={{ fontSize: '11px', color: '#1f2937', fontFamily: 'monospace' }}
-                        selectable
-                      >
-                        {r.tokenPrefix}
-                      </Text>
-                      <Text
-                        style={{ fontSize: '12px', color: r.success ? '#059669' : '#dc2626' }}
-                      >
-                        {r.success ? '✅ Aceito' : '❌ Rejeitado'}
-                        {!r.success && r.error ? ` - ${r.error.code}: ${r.error.message}` : ''}
-                      </Text>
-                      {r.success && r.messageId && (
-                        <Text style={{ fontSize: '10px', color: '#6b7280', fontFamily: 'monospace' }} selectable>
-                          Message ID: {r.messageId}
-                        </Text>
-                      )}
-                    </View>
-                  ))}
+                  <JsonPreview data={lastPingTest.response} label="📨 Resposta da API" />
                 </View>
-              )}
-            </View>
-          )}
-
-          {/* Último erro */}
-          {debugData.lastApiCall?.error && (
-            <View style={{ gap: '8px', padding: '12px', backgroundColor: '#fef2f2', borderRadius: '8px', border: '1px solid #fecaca' }}>
-              <Text style={{ fontSize: '14px', fontWeight: 'bold', color: '#dc2626' }}>
-                ❌ Último erro retornado pelo Firebase
-              </Text>
-              <Text style={{ fontSize: '12px', color: '#b91c1c' }} selectable>
-                {debugData.lastApiCall.error}
-              </Text>
-            </View>
-          )}
-
-          {!debugData.lastApiCall && (
-            <Text style={{ fontSize: '14px', color: '#6b7280' }}>
-              ⏳ Aguardando primeira chamada de envio...
-            </Text>
-          )}
+              );
+            } else {
+              return (
+                <Text style={{ fontSize: '14px', color: '#6b7280' }}>
+                  ⏳ Aguardando primeiro teste de ping...
+                </Text>
+              );
+            }
+          })()}
         </View>
       </Card>
 
-      <Card title="Diagnóstico Capacitor" icon="⚡">
+      <Card title="Último Teste /api/send-notification Direto" icon="📤">
         <View style={{ gap: '12px' }}>
-          <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
-            <Text style={{ fontSize: '13px', color: '#6b7280' }}>Capacitor.isNativePlatform()</Text>
-            <Text style={{ 
-              fontSize: '13px', 
-              fontWeight: 'bold',
-              color: capacitorDiagnostics.isNative ? '#10b981' : '#f59e0b'
-            }}>
-              {String(capacitorDiagnostics.isNative)}
-            </Text>
-          </View>
-
-          <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
-            <Text style={{ fontSize: '13px', color: '#6b7280' }}>Capacitor.getPlatform()</Text>
-            <Text style={{ fontSize: '13px', fontWeight: 'bold', color: '#374151', fontFamily: 'monospace' }}>
-              "{capacitorDiagnostics.platform}"
-            </Text>
-          </View>
-
-          {capacitorDiagnostics.windowCapacitor && <JsonPreview data={capacitorDiagnostics.windowCapacitor} label="window.Capacitor (simplificado)" />}
+          {(() => {
+            const debugWindow = typeof window !== 'undefined' ? (window as any).__DEBUG_PUSH__ : null;
+            const lastTest = debugWindow?.lastSendNotificationDirectTest;
+            if (lastTest) {
+              return (
+                <View style={{ gap: '8px' }}>
+                  <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: '12px' }}>
+                    <Badge label="Status HTTP" status={lastTest.status} color={String(lastTest.status).startsWith('2') ? '#10b981' : '#ef4444'} />
+                  </View>
+                  <Text style={{ fontSize: '11px', color: '#6b7280' }}>
+                    🕒 {new Date(lastTest.timestamp).toLocaleString('pt-BR')}
+                  </Text>
+                  <JsonPreview data={lastTest.payload} label="📦 Payload enviado" />
+                  <JsonPreview data={lastTest.response} label="📨 Resposta da API" />
+                </View>
+              );
+            } else {
+              return (
+                <Text style={{ fontSize: '14px', color: '#6b7280' }}>
+                  ⏳ Aguardando primeiro teste direto...
+                </Text>
+              );
+            }
+          })()}
         </View>
       </Card>
 
-      <Card title="Diagnóstico do Navegador" icon="🌐">
+      <Card title="DIAGNÓSTICO DE CONECTIVIDADE COMPLETO" icon="🌐">
         <View style={{ gap: '12px' }}>
-          <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
-            <Text style={{ fontSize: '13px', color: '#6b7280' }}>Modo Standalone (PWA)</Text>
-            <Text style={{ 
-              fontSize: '13px', 
-              fontWeight: 'bold',
-              color: browserDiagnostics.isStandalone ? '#3b82f6' : '#6b7280'
-            }}>
-              {browserDiagnostics.isStandalone ? 'SIM' : 'NÃO'}
-            </Text>
-          </View>
-          
+          {(() => {
+            const debugWindow = typeof window !== 'undefined' ? (window as any).__DEBUG_PUSH__ : null;
+            const lastTest = debugWindow?.fullConnectivityDiagnostic;
+            if (lastTest) {
+              // Determinar cenário
+              let scenario = '';
+              if (lastTest.google?.success === false) {
+                scenario = 'CENÁRIO A (Problema de rede/WebView Android)';
+              } else if (lastTest.vercelHomepage?.success === false || lastTest.vercelPing?.success === false) {
+                scenario = 'CENÁRIO B (Problema de DNS/SSL/configuração Android para o domínio)';
+              } else if (lastTest.google?.success && lastTest.vercelHomepage?.success && lastTest.vercelPing?.success) {
+                scenario = 'CENÁRIO C (Problema específico da API send-notification)';
+              }
+
+              return (
+                <View style={{ gap: '12px' }}>
+                  <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: '12px', padding: '12px', backgroundColor: scenario.includes('CENÁRIO A') ? '#fee2e2' : scenario.includes('CENÁRIO B') ? '#fff7ed' : '#dcfce7', borderRadius: '8px', border: scenario.includes('CENÁRIO A') ? '1px solid #ef4444' : scenario.includes('CENÁRIO B') ? '1px solid #f97316' : '1px solid #10b981' }}>
+                    <Text style={{ fontSize: '14px', fontWeight: 'bold', color: '#111827' }}>
+                      {scenario}
+                    </Text>
+                  </View>
+
+                  <View style={{ gap: '12px' }}>
+                    <Text style={{ fontSize: '14px', fontWeight: 'bold', color: '#111827' }}>
+                      1️⃣ TESTE Google: {lastTest.google?.success ? '✅ OK' : '❌ FALHOU'}
+                    </Text>
+                    <JsonPreview data={lastTest.google} label="Resultado Teste Google" />
+                  </View>
+
+                  <View style={{ gap: '12px' }}>
+                    <Text style={{ fontSize: '14px', fontWeight: 'bold', color: '#111827' }}>
+                      2️⃣ TESTE Vercel Homepage: {lastTest.vercelHomepage?.success ? '✅ OK' : '❌ FALHOU'}
+                    </Text>
+                    <JsonPreview data={lastTest.vercelHomepage} label="Resultado Teste Vercel Homepage" />
+                  </View>
+
+                  <View style={{ gap: '12px' }}>
+                    <Text style={{ fontSize: '14px', fontWeight: 'bold', color: '#111827' }}>
+                      3️⃣ TESTE API Ping: {lastTest.vercelPing?.success ? '✅ OK' : '❌ FALHOU'}
+                    </Text>
+                    <JsonPreview data={lastTest.vercelPing} label="Resultado Teste API Ping" />
+                  </View>
+                </View>
+              );
+            } else {
+              return (
+                <Text style={{ fontSize: '14px', color: '#6b7280' }}>
+                  ⏳ Aguardando primeiro diagnóstico de conectividade completo...
+                </Text>
+              );
+            }
+          })()}
+        </View>
+      </Card>
+
+      <Card title="Diagnóstico Capacitor" icon="📱">
+        <View style={{ gap: '12px' }}>
           <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: '12px' }}>
-            <Badge label="Notification API" status={browserDiagnostics.notification} />
-            <Badge label="Service Worker" status={browserDiagnostics.serviceWorker} />
-            <Badge label="Permissão Notificação" status={browserDiagnostics.notificationPermission} />
+            <Badge label="Plataforma Nativa?" status={capacitorDiagnostics.isNative} />
+            <Badge label="Plataforma" status={capacitorDiagnostics.platform} color="#4C84C1" />
           </View>
-          
-          <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
-            <Text style={{ fontSize: '13px', color: '#6b7280' }}>window.location.href</Text>
-          </View>
-          <Text style={{ 
-            fontSize: '11px', 
-            color: '#374151', 
-            fontFamily: 'monospace', 
-            wordBreak: 'break-all',
-            backgroundColor: '#f3f4f6',
-            padding: '12px',
-            borderRadius: '8px'
-          }} selectable>
-            {browserDiagnostics.href}
-          </Text>
-          
-          <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
-            <Text style={{ fontSize: '13px', color: '#6b7280' }}>navigator.userAgent</Text>
-          </View>
-          <Text style={{ 
-            fontSize: '11px', 
-            color: '#374151', 
-            fontFamily: 'monospace', 
-            wordBreak: 'break-all',
-            backgroundColor: '#f3f4f6',
-            padding: '12px',
-            borderRadius: '8px'
-          }} selectable>
-            {browserDiagnostics.userAgent}
-          </Text>
+          <JsonPreview data={capacitorDiagnostics.windowCapacitor} label="window.Capacitor" />
         </View>
       </Card>
 
-      <Card title="Configuração Firebase (Raw Env)" icon="🔧">
-        <View style={{ gap: '8px' }}>
-          {diagnosticFirebaseConfig ? (
-            Object.entries(diagnosticFirebaseConfig).map(([key, value]) => (
-              <View key={key} style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
-                <Text style={{ fontSize: '13px', color: '#6b7280' }}>{key}</Text>
-                <Text style={{ fontSize: '12px', color: '#374151', fontFamily: 'monospace', textAlign: 'right' }} selectable>
-                  {value != null ? String(value) : '<VAZIO>'}
-                </Text>
-              </View>
-            ))
-          ) : (
-            <Text style={{ fontSize: '13px', color: '#ef4444', textAlign: 'center' }}>Carregando...</Text>
-          )}
-        </View>
-      </Card>
-
-      <Card title="Configuração Firebase (Exportada)" icon="🎯">
-        <View style={{ gap: '8px' }}>
-          {exportedFirebaseConfigMasked ? (
-            Object.entries(exportedFirebaseConfigMasked).map(([key, value]) => (
-              <View key={key} style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
-                <Text style={{ fontSize: '13px', color: '#6b7280' }}>{key}</Text>
-                <Text style={{ fontSize: '12px', color: '#374151', fontFamily: 'monospace', textAlign: 'right' }} selectable>
-                  {value != null ? String(value) : '<VAZIO>'}
-                </Text>
-              </View>
-            ))
-          ) : (
-            <Text style={{ fontSize: '13px', color: '#ef4444', textAlign: 'center' }}>Carregando...</Text>
-          )}
-        </View>
-      </Card>
-
-      {/* Nova seção: Fluxo de Envio */}
-      <Card title="Fluxo de Envio" icon="📤">
-        <View style={{ gap: '16px' }}>
-          {/* 1. getAdminFcmTokens() */}
-          <View style={{ gap: '8px' }}>
-            <Text style={{ fontSize: '14px', fontWeight: '700', color: '#111827' }}>1. getAdminFcmTokens()</Text>
-            {pushDiagnostics.getAdminFcmTokens ? (
-              <View style={{ gap: '8px' }}>
-                {pushDiagnostics.getAdminFcmTokens.error ? (
-                  <View style={{ padding: '10px', backgroundColor: '#fef2f2', borderRadius: '8px', border: '1px solid #fecaca' }}>
-                    <Text style={{ fontSize: '12px', color: '#dc2626', fontWeight: '700' }}>Erro:</Text>
-                    <Text style={{ fontSize: '12px', color: '#dc2626' }} selectable>{pushDiagnostics.getAdminFcmTokens.error}</Text>
-                  </View>
-                ) : (
-                  <>
-                    <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: '8px' }}>
-                      <Badge label="Total Users" status={String(pushDiagnostics.getAdminFcmTokens.totalUsers)} />
-                      <Badge label="Admins Found" status={String(pushDiagnostics.getAdminFcmTokens.adminCount)} />
-                      <Badge label="Tokens Found" status={String(pushDiagnostics.getAdminFcmTokens.tokenCount)} />
-                    </View>
-                    {pushDiagnostics.getAdminFcmTokens.maskedTokens?.length > 0 && (
-                      <>
-                        <Text style={{ fontSize: '13px', fontWeight: '600', color: '#374151' }}>Tokens (mascarados):</Text>
-                        <View style={{ flexDirection: 'column', gap: '4px' }}>
-                          {pushDiagnostics.getAdminFcmTokens.maskedTokens.map((token: string, index: number) => (
-                            <Text key={index} style={{ fontSize: '12px', color: '#374151', fontFamily: 'monospace' }} selectable>
-                              - {token}
-                            </Text>
-                          ))}
-                        </View>
-                      </>
-                    )}
-                    {pushDiagnostics.getAdminFcmTokens.adminUsers?.length > 0 && (
-                      <JsonPreview data={pushDiagnostics.getAdminFcmTokens.adminUsers} label="Admin Users" />
-                    )}
-                  </>
-                )}
-              </View>
-            ) : (
-              <Text style={{ fontSize: '13px', color: '#6b7280' }}>Nenhuma execução registrada</Text>
-            )}
-          </View>
-
-          {/* 2. Última Chamada API */}
-          <View style={{ gap: '8px' }}>
-            <Text style={{ fontSize: '14px', fontWeight: '700', color: '#111827' }}>2. Última Chamada à API</Text>
-            {debugData.lastApiCall ? (
-              <View style={{ gap: '8px' }}>
-                <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: '8px' }}>
-                  <Badge label="Status" status={typeof debugData.lastApiCall.status === 'number' ? (debugData.lastApiCall.status < 300 ? 'OK' : 'ERRO') : String(debugData.lastApiCall.status)} />
-                  {debugData.lastApiCall.response?.tokensReceivedCount && <Badge label="Tokens Recebidos API" status={String(debugData.lastApiCall.response.tokensReceivedCount)} />}
-                  {debugData.lastApiCall.response?.sent && <Badge label="Enviados com Sucesso" status={String(debugData.lastApiCall.response.sent)} />}
-                </View>
-                
-                {debugData.lastApiCall.response?.payloadReceived && (
-                  <JsonPreview data={debugData.lastApiCall.response.payloadReceived} label="Payload Recebido pela API" />
-                )}
-                
-                {debugData.lastApiCall.response?.successTokens?.length > 0 && (
-                  <JsonPreview data={debugData.lastApiCall.response.successTokens} label="Tokens com Sucesso" />
-                )}
-                
-                {debugData.lastApiCall.response?.failureTokens?.length > 0 && (
-                  <JsonPreview data={debugData.lastApiCall.response.failureTokens} label="Tokens com Falha" />
-                )}
-                
-                {debugData.lastApiCall.response?.invalidTokensRemoved?.length > 0 && (
-                  <JsonPreview data={debugData.lastApiCall.response.invalidTokensRemoved} label="Tokens Inválidos Removidos" />
-                )}
-                
-                {debugData.lastApiCall.response?.fullResult && (
-                  <JsonPreview data={debugData.lastApiCall.response.fullResult} label="Resultado Completo do FCM" />
-                )}
-                
-                {debugData.lastApiCall.error && (
-                  <View style={{ padding: '10px', backgroundColor: '#fef2f2', borderRadius: '8px', border: '1px solid #fecaca' }}>
-                    <Text style={{ fontSize: '12px', color: '#dc2626', fontWeight: '700' }}>Erro na Chamada API:</Text>
-                    <Text style={{ fontSize: '12px', color: '#dc2626' }} selectable>{String(debugData.lastApiCall.error)}</Text>
-                  </View>
-                )}
-              </View>
-            ) : (
-              <Text style={{ fontSize: '13px', color: '#6b7280' }}>Nenhuma chamada à API registrada</Text>
-            )}
-          </View>
-        </View>
-      </Card>
-
-      <Card title="Status Firebase SDK & Service Worker" icon="🔥">
+      <Card title="Diagnóstico Push" icon="🔔">
         <View style={{ gap: '12px' }}>
-          <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: '8px' }}>
-            <Badge label="Messaging Support" status={pushDiagnostics.messagingIsSupported} />
-            <Badge label="SW API" status={pushDiagnostics.serviceWorkerAPIAvailable} />
-            <Badge label="Notification API" status={pushDiagnostics.notificationAPIAvailable} />
-            <Badge label="Messaging Criado" status={pushDiagnostics.messagingObjectCreated} />
+          <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: '12px' }}>
+            <Badge label="Messaging Criado?" status={pushDiagnostics.messagingObjectCreated} />
+            <Badge label="Messaging Disponível?" status={pushDiagnostics.messagingAvailable} />
+            <Badge label="Messaging Suportado?" status={pushDiagnostics.messagingIsSupported} />
           </View>
-
-          <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
-            <Text style={{ fontSize: '13px', color: '#6b7280' }}>Permissão Notificações</Text>
-            <Text style={{ fontSize: '13px', fontWeight: 'bold', color: '#374151' }}>
-              {pushDiagnostics.notificationPermission?.toUpperCase() || 'NÃO VERIFICADO'}
-            </Text>
-          </View>
-
-          <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
-            <Text style={{ fontSize: '13px', color: '#6b7280' }}>SW Registrado</Text>
-            <Text style={{ 
-              fontSize: '13px', fontWeight: 'bold', color: pushDiagnostics.serviceWorkerRegistered ? '#10b981' : '#ef4444' }}>
-              {pushDiagnostics.serviceWorkerRegistered ? 'SIM' : 'NÃO'}
-            </Text>
-          </View>
-
-          {pushDiagnostics.serviceWorkerScope && (
-            <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
-              <Text style={{ fontSize: '13px', color: '#6b7280' }}>SW Scope</Text>
-              <Text style={{ fontSize: '12px', color: '#374151', fontFamily: 'monospace', wordBreak: 'break-all' }} selectable>
-                {pushDiagnostics.serviceWorkerScope}
-              </Text>
-            </View>
-          )}
-
-          <View style={{ flexDirection: 'row', justifyContent: 'flexStart', gap: '8px' }}>
-            <Badge label="SW Active" status={pushDiagnostics.serviceWorkerActive} />
-            <Badge label="SW Waiting" status={pushDiagnostics.serviceWorkerWaiting} />
-            <Badge label="SW Installing" status={pushDiagnostics.serviceWorkerInstalling} />
-          </View>
-
-          {pushDiagnostics.existingSWRegistrations?.length > 0 && (
-            <JsonPreview data={pushDiagnostics.existingSWRegistrations} label="Service Workers Existentes" />
-          )}
-
-          {pushDiagnostics.getFcmTokenSuccess !== null && (
-            <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
-              <Text style={{ fontSize: '13px', color: '#6b7280' }}>getFcmToken() Sucesso</Text>
-              <Text style={{ 
-                fontSize: '13px', fontWeight: 'bold', color: pushDiagnostics.getFcmTokenSuccess ? '#10b981' : '#ef4444' }}>
-                {pushDiagnostics.getFcmTokenSuccess ? 'SIM' : 'NÃO'}
-              </Text>
-            </View>
-          )}
-
-          {pushDiagnostics.getFcmTokenError && (
-            <JsonPreview data={pushDiagnostics.getFcmTokenError} label="Erro getFcmToken()" />
-          )}
-
-          {pushDiagnostics.messagingError && (
-            <View style={{ gap: '8px', padding: '12px', backgroundColor: '#fef2f2', borderRadius: '8px', border: '1px solid #fecaca' }}>
-              <Text style={{ fontSize: '13px', fontWeight: '700', color: '#dc2626' }}>Erro Firebase Messaging</Text>
-              <Text style={{ fontSize: '12px', color: '#991b1b' }} selectable>
-                <Text style={{ fontWeight: 'bold' }}>Código:</Text> {pushDiagnostics.messagingError.code || 'N/A'}
-              </Text>
-              <Text style={{ fontSize: '12px', color: '#991b1b' }} selectable>
-                <Text style={{ fontWeight: 'bold' }}>Mensagem:</Text> {pushDiagnostics.messagingError.message || 'N/A'}
-              </Text>
-              {pushDiagnostics.messagingError.stack && (
-                <JsonPreview data={pushDiagnostics.messagingError.stack} label="Stack Trace" />
-              )}
-            </View>
-          )}
-
-          {pushDiagnostics.serviceWorkerError && (
-            <JsonPreview data={pushDiagnostics.serviceWorkerError} label="Erro Service Worker" />
-          )}
-
-          {pushDiagnostics.firebaseSdkStatus && (
-            <JsonPreview data={pushDiagnostics.firebaseSdkStatus} label="Status Firebase SDK" />
-          )}
-
-        </View>
-      </Card>
-
-      <Card title="Diagnóstico Push Notifications" icon="🔔">
-        <View style={{ gap: '12px' }}>
-          <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
-            <Text style={{ fontSize: '13px', color: '#6b7280' }}>Status Registro</Text>
-            <Text style={{ 
-              fontSize: '13px', 
-              fontWeight: 'bold',
-              color: pushDiagnostics.registrationStatus === 'registered' 
-                ? '#10b981' 
-                : pushDiagnostics.registrationStatus === 'error' 
-                ? '#ef4444' 
-                : '#f59e0b'
-            }}>
-              {pushDiagnostics.registrationStatus.toUpperCase()}
-            </Text>
-          </View>
-
-          <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
-            <Text style={{ fontSize: '13px', color: '#6b7280' }}>Token FCM</Text>
-            <View style={{ flexDirection: 'row', alignItems: 'center', gap: '8px' }}>
-              <Text style={{ fontSize: '13px', color: '#374151', fontFamily: 'monospace' }} selectable>
-                {pushDiagnostics.fcmToken ? `${pushDiagnostics.fcmToken.substring(0, 12)}...` : 'Não registrado'}
-              </Text>
-              {pushDiagnostics.fcmToken && <Button onClick={copyFcmToken} style={{ padding: '4px 8px', fontSize: '11px', backgroundColor: '#e0e7ff', color: '#4338ca', border: 'none', borderRadius: '6px' }}>📋</Button>}
-            </View>
-          </View>
-
-          {pushDiagnostics.lastTokenUpdate && (
-            <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
-              <Text style={{ fontSize: '13px', color: '#6b7280' }}>Última atualização token</Text>
-              <Text style={{ fontSize: '13px', color: '#374151', fontWeight: '500' }}>
-                {new Date(pushDiagnostics.lastTokenUpdate).toLocaleString('pt-BR')}
-              </Text>
-            </View>
-          )}
-          
-          <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
-            <Text style={{ fontSize: '13px', color: '#6b7280' }}>Service Worker API</Text>
-            <Text style={{ 
-              fontSize: '13px', 
-              fontWeight: 'bold',
-              color: pushDiagnostics.serviceWorkerAPIAvailable ? '#10b981' : '#ef4444'
-            }}>
-              {pushDiagnostics.serviceWorkerAPIAvailable ? 'DISPONÍVEL' : 'NÃO DISPONÍVEL'}
-            </Text>
-          </View>
-
-          <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
-            <Text style={{ fontSize: '13px', color: '#6b7280' }}>Service Worker Registrado</Text>
-            <Text style={{ 
-              fontSize: '13px', 
-              fontWeight: 'bold',
-              color: pushDiagnostics.serviceWorkerRegistered ? '#10b981' : '#ef4444'
-            }}>
-              {pushDiagnostics.serviceWorkerRegistered ? 'SIM' : 'NÃO'}
-            </Text>
-          </View>
-
-          {pushDiagnostics.serviceWorkerScope && (
-            <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
-              <Text style={{ fontSize: '13px', color: '#6b7280' }}>Registration Scope</Text>
-              <Text style={{ fontSize: '11px', color: '#374151', fontFamily: 'monospace' }} selectable>
-                {pushDiagnostics.serviceWorkerScope}
-              </Text>
-            </View>
-          )}
-
-          <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
-            <Text style={{ fontSize: '13px', color: '#6b7280' }}>Messaging Object Created</Text>
-            <Text style={{ 
-              fontSize: '13px', 
-              fontWeight: 'bold',
-              color: pushDiagnostics.messagingObjectCreated ? '#10b981' : '#ef4444'
-            }}>
-              {pushDiagnostics.messagingObjectCreated ? 'SIM' : 'NÃO'}
-            </Text>
-          </View>
-          
-          <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
-            <Text style={{ fontSize: '13px', color: '#6b7280' }}>Firebase Messaging</Text>
-            <Text style={{ 
-              fontSize: '13px', 
-              fontWeight: 'bold',
-              color: pushDiagnostics.messagingAvailable ? '#10b981' : '#ef4444'
-            }}>
-              {pushDiagnostics.messagingAvailable ? 'DISPONÍVEL' : 'INDISPONÍVEL'}
-            </Text>
-          </View>
-
-          {pushDiagnostics.serviceWorkerError && (
-            <View style={{ backgroundColor: '#fef2f2', border: '1px solid #fecaca', borderRadius: '8px', padding: '10px' }}>
-              <Text style={{ fontSize: '12px', color: '#991b1b', fontWeight: 'bold', marginBottom: '4px' }}>⚠️ Service Worker Error:</Text>
-              <Text style={{ fontSize: '11px', color: '#991b1b', fontFamily: 'monospace', wordBreak: 'break-all' }} selectable>
-                {pushDiagnostics.serviceWorkerError}
-              </Text>
-            </View>
-          )}
-
-          {pushDiagnostics.messagingError && (
-            <View style={{ backgroundColor: '#fef2f2', border: '1px solid #fecaca', borderRadius: '8px', padding: '10px' }}>
-              <Text style={{ fontSize: '12px', color: '#991b1b', fontWeight: 'bold', marginBottom: '4px' }}>⚠️ Firebase Messaging Error:</Text>
-              <JsonPreview data={pushDiagnostics.messagingError} label="Detalhes do Erro" />
-            </View>
-          )}
-
-          {pushDiagnostics.checkPermissionsResult && <JsonPreview data={pushDiagnostics.checkPermissionsResult} label="PushNotifications.checkPermissions()" />}
-          {pushDiagnostics.requestPermissionsResult && <JsonPreview data={pushDiagnostics.requestPermissionsResult} label="PushNotifications.requestPermissions()" />}
-        </View>
-      </Card>
-
-      {/* Último Fluxo de Envio */}
-      <Card title="Último Fluxo de Envio" icon="📤">
-        <View style={{ gap: '12px' }}>
-          {debugData.lastSendFlow ? (
-            <>
-              <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
-                <Text style={{ fontSize: '13px', color: '#6b7280' }}>Timestamp</Text>
-                <Text style={{ fontSize: '13px', color: '#374151', fontWeight: '500' }}>
-                  {new Date(debugData.lastSendFlow.timestamp).toLocaleString('pt-BR')}
-                </Text>
-              </View>
-
-              <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
-                <Text style={{ fontSize: '13px', color: '#6b7280' }}>Etapa Atual</Text>
-                <Text style={{ 
-                  fontSize: '13px', 
-                  fontWeight: 'bold',
-                  color: debugData.lastSendFlow.currentStep === 'completed' 
-                    ? '#10b981' 
-                    : debugData.lastSendFlow.currentStep === 'error' 
-                      ? '#ef4444' 
-                      : '#f59e0b'
-                }}>
-                  {debugData.lastSendFlow.currentStep}
-                </Text>
-              </View>
-
-              {debugData.lastSendFlow.userId && (
-                <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
-                  <Text style={{ fontSize: '13px', color: '#6b7280' }}>ID do Usuário</Text>
-                  <Text style={{ fontSize: '13px', color: '#374151' }}>
-                    {debugData.lastSendFlow.userId}
-                  </Text>
-                </View>
-              )}
-
-              {debugData.lastSendFlow.userName && (
-                <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
-                  <Text style={{ fontSize: '13px', color: '#6b7280' }}>Nome do Usuário</Text>
-                  <Text style={{ fontSize: '13px', color: '#374151' }}>
-                    {debugData.lastSendFlow.userName}
-                  </Text>
-                </View>
-              )}
-
-              {debugData.lastSendFlow.appointmentId && (
-                <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
-                  <Text style={{ fontSize: '13px', color: '#6b7280' }}>ID do Agendamento</Text>
-                  <Text style={{ fontSize: '13px', color: '#374151' }}>
-                    {debugData.lastSendFlow.appointmentId}
-                  </Text>
-                </View>
-              )}
-
-              <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
-                <Text style={{ fontSize: '13px', color: '#6b7280' }}>Quantidade de Admins</Text>
-                <Text style={{ fontSize: '13px', color: '#374151' }}>
-                  {debugData.lastSendFlow.adminCount ?? 'N/A'}
-                </Text>
-              </View>
-
-              <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
-                <Text style={{ fontSize: '13px', color: '#6b7280' }}>Quantidade de Tokens</Text>
-                <Text style={{ fontSize: '13px', color: '#374151' }}>
-                  {debugData.lastSendFlow.tokenCount ?? 'N/A'}
-                </Text>
-              </View>
-
-              {debugData.lastSendFlow.maskedTokens?.length > 0 && (
-                <View style={{ gap: '8px' }}>
-                  <Text style={{ fontSize: '13px', fontWeight: '700', color: '#111827' }}>Tokens (mascarados):</Text>
-                  <View style={{ flexDirection: 'column', gap: '4px' }}>
-                    {debugData.lastSendFlow.maskedTokens.map((token: string, index: number) => (
-                      <Text key={index} style={{ fontSize: '11px', color: '#374151', fontFamily: 'monospace' }} selectable>
-                        - {token}
-                      </Text>
-                    ))}
-                  </View>
-                </View>
-              )}
-
-              {debugData.lastSendFlow.payloadSent && (
-                <JsonPreview data={debugData.lastSendFlow.payloadSent} label="Payload Enviado para a API" />
-              )}
-
-              {debugData.lastSendFlow.error && (
-                <View style={{ padding: '12px', backgroundColor: '#fef2f2', border: '1px solid #fecaca', borderRadius: '8px' }}>
-                  <Text style={{ fontSize: '12px', color: '#991b1b', fontWeight: 'bold', marginBottom: '6px' }}>Erro:</Text>
-                  <Text style={{ fontSize: '12px', color: '#991b1b' }} selectable>{debugData.lastSendFlow.error}</Text>
-                  {debugData.lastSendFlow.errorDetails && <JsonPreview data={debugData.lastSendFlow.errorDetails} label="Detalhes do Erro" />}
-                </View>
-              )}
-            </>
-          ) : (
-            <Text style={{ fontSize: '13px', color: '#6b7280', textAlign: 'center' }}>
-              Nenhum fluxo de envio registrado
-            </Text>
-          )}
-        </View>
-      </Card>
-
-      {debugData.lastApiCall && (
-        <Card title="Status API send-notification" icon="🌐">
           <View style={{ gap: '12px' }}>
-            <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
-              <Text style={{ fontSize: '13px', color: '#6b7280' }}>Timestamp</Text>
-              <Text style={{ fontSize: '13px', color: '#374151', fontWeight: '500' }}>
-                {new Date(debugData.lastApiCall.timestamp).toLocaleString('pt-BR')}
+            <Text style={{ fontSize: '14px', fontWeight: 'bold', color: '#111827' }}>
+              🔑 Token FCM:
+            </Text>
+            {pushDiagnostics.fcmToken ? (
+              <Text
+                style={{
+                  fontSize: '11px',
+                  color: '#374151',
+                  fontFamily: 'monospace',
+                  wordBreak: 'break-all',
+                  backgroundColor: '#f3f4f6',
+                  padding: '8px',
+                  borderRadius: '8px',
+                }}
+                selectable
+              >
+                {pushDiagnostics.fcmToken}
               </Text>
-            </View>
-            
-            <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
-              <Text style={{ fontSize: '13px', color: '#6b7280' }}>URL</Text>
-              <Text style={{ fontSize: '13px', color: '#374151', fontFamily: 'monospace' }} selectable>
-                {debugData.lastApiCall.url}
+            ) : (
+              <Text style={{ fontSize: '14px', color: '#ef4444' }}>
+                Nenhum token registrado!
               </Text>
-            </View>
-            
-            <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
-              <Text style={{ fontSize: '13px', color: '#6b7280' }}>Status HTTP</Text>
-              <Text style={{ 
-                fontSize: '13px', 
-                fontWeight: 'bold',
-                color: (typeof debugData.lastApiCall.status === 'number' && debugData.lastApiCall.status < 300) 
-                  ? '#10b981' 
-                  : '#ef4444'
-              }}>
-                {debugData.lastApiCall.status}
-              </Text>
-            </View>
-            
-            <View style={{ gap: '8px' }}>
-              <Text style={{ fontSize: '13px', color: '#6b7280' }}>Payload Enviado</Text>
-              <Text style={{ 
-                fontSize: '11px', 
-                color: '#374151', 
-                fontFamily: 'monospace', 
-                wordBreak: 'break-all',
-                backgroundColor: '#f3f4f6',
-                padding: '12px',
-                borderRadius: '8px'
-              }} selectable>
-                {JSON.stringify(debugData.lastApiCall.payload, null, 2)}
-              </Text>
-            </View>
-            
-            {debugData.lastApiCall.response && <JsonPreview data={debugData.lastApiCall.response} label="Resposta" />}
-            {debugData.lastApiCall.error && <JsonPreview data={debugData.lastApiCall.error} label="Erro" />}
+            )}
+            <ActionButton onClick={copyFcmToken} variant="primary">
+              📋 Copiar Token
+            </ActionButton>
+          </View>
+          <JsonPreview data={pushDiagnostics} label="Diagnóstico Completo Push" />
+        </View>
+      </Card>
+
+      {tokenDiagnostics && (
+        <Card title="Diagnóstico de Tokens" icon="📊">
+          <View style={{ gap: '12px' }}>
+            <Text style={{ fontSize: '14px', fontWeight: 'bold', color: '#111827' }}>
+              Total de usuários: {tokenDiagnostics.totalUsers}
+            </Text>
+            <JsonPreview data={tokenDiagnostics} label="Diagnóstico de Tokens Completo" />
           </View>
         </Card>
       )}
 
-      <Card title="Botões de Ação" icon="🧪">
-        <View style={{ gap: '10px' }}>
-          <View style={{ flexDirection: 'row', gap: '10px' }}>
-            <ActionButton onClick={requestPushPermissions} variant="primary">🔑 Permissões Push</ActionButton>
-            <ActionButton onClick={runCompleteDiagnostic} variant="primary">🔍 Executar Diagnóstico Completo</ActionButton>
-            <ActionButton onClick={refreshDebugData}>🔄 Atualizar Diagnósticos</ActionButton>
-          </View>
+      <Card title="Diagnóstico Firebase" icon="🔥">
+        <View style={{ gap: '12px' }}>
+          <JsonPreview data={diagnosticFirebaseConfig} label="Configuração Firebase (masked)" />
+          <JsonPreview data={exportedFirebaseConfigMasked} label="Configuração Exportada (masked)" />
         </View>
       </Card>
 
-      {/* New: Service Workers Detailed Info */}
-      <Card title="Service Workers - Detalhes" icon="🔧">
+      <Card title="Logs" icon="📜">
         <View style={{ gap: '12px' }}>
-          {pushDiagnostics.currentSWController && (
-            <View style={{ gap: '8px', padding: '12px', backgroundColor: '#f0fdf4', border: '1px solid #bbf7d0', borderRadius: '8px' }}>
-              <Text style={{ fontSize: '13px', fontWeight: '700', color: '#166534' }}>✅ Service Worker Controlador</Text>
-              <Text style={{ fontSize: '11px', color: '#166534', fontFamily: 'monospace', wordBreak: 'break-all' }} selectable>
-                Script URL: {pushDiagnostics.currentSWController.scriptURL}
-              </Text>
-              <Text style={{ fontSize: '12px', color: '#166534' }}>
-                State: {pushDiagnostics.currentSWController.state}
-              </Text>
-            </View>
-          )}
-
-          {pushDiagnostics.currentSWRegistrations?.length > 0 ? (
-            <View style={{ gap: '10px' }}>
-              <Text style={{ fontSize: '13px', fontWeight: '700', color: '#111827' }}>Service Workers Registrados ({pushDiagnostics.currentSWRegistrations.length}):</Text>
-              {pushDiagnostics.currentSWRegistrations.map((sw, index) => (
-                <View key={index} style={{ padding: '10px', backgroundColor: '#f3f4f6', borderRadius: '8px', gap: '6px' }}>
-                  <Text style={{ fontSize: '12px', fontWeight: '600', color: '#374151' }}>
-                    {sw.scope}
-                  </Text>
-                  <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: '8px' }}>
-                    <Badge label="Active" status={sw.active} />
-                    <Badge label="Waiting" status={sw.waiting} />
-                    <Badge label="Installing" status={sw.installing} />
+          <View style={{ flexDirection: 'row', gap: '8px', flexWrap: 'wrap' }}>
+            <ActionButton onClick={() => setFilterType('ALL')}>TODOS</ActionButton>
+            <ActionButton onClick={() => setFilterType('INFO')}>INFO</ActionButton>
+            <ActionButton onClick={() => setFilterType('WARN')}>AVISO</ActionButton>
+            <ActionButton onClick={() => setFilterType('ERROR')}>ERRO</ActionButton>
+            <ActionButton onClick={() => setFilterType('SUCCESS')}>SUCESSO</ActionButton>
+          </View>
+          {filteredLogs.length > 0 ? (
+            <View style={{ gap: '8px' }}>
+              {filteredLogs.map((log, index) => (
+                <View key={index} style={{
+                  padding: '12px',
+                  borderRadius: '8px',
+                  backgroundColor: log.type.toUpperCase().includes('ERROR') ? '#fef2f2' : 
+                                    log.type.toUpperCase().includes('WARN') ? '#fffbeb' : 
+                                    log.type.toUpperCase().includes('SUCCESS') ? '#f0fdf4' : 
+                                    '#f8fafc',
+                  borderLeft: `4px solid ${
+                    log.type.toUpperCase().includes('ERROR') ? '#dc2626' : 
+                    log.type.toUpperCase().includes('WARN') ? '#d97706' : 
+                    log.type.toUpperCase().includes('SUCCESS') ? '#16a34a' : 
+                    '#3b82f6'
+                  }`
+                }}>
+                  <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: '4px' }}>
+                    <Text style={{ fontSize: '12px', fontWeight: 'bold', color: '#111827' }}>
+                      {log.type}
+                    </Text>
+                    <Text style={{ fontSize: '11px', color: '#9ca3af' }}>
+                      {log.timestamp ? new Date(log.timestamp).toLocaleString('pt-BR') : ''}
+                    </Text>
                   </View>
+                  <Text style={{ fontSize: '13px', color: '#374151' }}>
+                    {log.message}
+                  </Text>
+                  {log.data && (
+                    <JsonPreview data={log.data} label="Dados" />
+                  )}
                 </View>
               ))}
             </View>
           ) : (
-            <Text style={{ fontSize: '13px', color: '#6b7280', textAlign: 'center' }}>
-              Nenhum Service Worker registrado
+            <Text style={{ fontSize: '14px', color: '#6b7280' }}>
+              Nenhum log disponível.
             </Text>
           )}
         </View>
       </Card>
-
-      {/* New: getFcmToken Detailed Info */}
-      <Card title="getFcmToken() - Detalhes" icon="🔑">
-        <View style={{ gap: '12px' }}>
-          {pushDiagnostics.getFcmTokenTimestamp && (
-            <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
-              <Text style={{ fontSize: '13px', color: '#6b7280' }}>Data/Hora</Text>
-              <Text style={{ fontSize: '13px', color: '#374151' }}>
-                {new Date(pushDiagnostics.getFcmTokenTimestamp).toLocaleString('pt-BR')}
-              </Text>
-            </View>
-          )}
-
-          {pushDiagnostics.getFcmTokenDuration && (
-            <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
-              <Text style={{ fontSize: '13px', color: '#6b7280' }}>Duração</Text>
-              <Text style={{ fontSize: '13px', color: '#374151' }}>
-                {pushDiagnostics.getFcmTokenDuration}ms
-              </Text>
-            </View>
-          )}
-
-          {pushDiagnostics.fcmToken && (
-            <>
-              <Text style={{ fontSize: '13px', fontWeight: '700', color: '#111827' }}>Token FCM:</Text>
-              <Text style={{ fontSize: '11px', color: '#374151', fontFamily: 'monospace', wordBreak: 'break-all', backgroundColor: '#f3f4f6', padding: '10px', borderRadius: '8px' }} selectable>
-                {pushDiagnostics.fcmToken}
-              </Text>
-            </>
-          )}
-
-          {pushDiagnostics.getFcmTokenErrorFull && (
-            <JsonPreview data={pushDiagnostics.getFcmTokenErrorFull} label="Erro Completo" />
-          )}
-        </View>
-      </Card>
-
-      {debugData.lastReceived && (
-        <Card title="Última Notificação Recebida" icon="📥">
-          <View style={{ 
-            backgroundColor: '#f0fdf4', 
-            border: '1px solid #bbf7d0', 
-            borderRadius: '10px', 
-            padding: '14px' 
-          }}>
-            <Text style={{ fontSize: '12px', color: '#6b7280', marginBottom: '8px' }}>Payload:</Text>
-            <Text style={{ fontSize: '11px', color: '#166534', fontFamily: 'monospace', wordBreak: 'break-all' }} selectable>
-              {typeof debugData.lastReceived === 'object' ? JSON.stringify(debugData.lastReceived, null, 2) : String(debugData.lastReceived)}
-            </Text>
-          </View>
-        </Card>
-      )}
-
-      {debugData.lastError && (
-        <Card title="Último Erro" icon="❌">
-          <View style={{ 
-            backgroundColor: '#fef2f2', 
-            border: '1px solid #fecaca', 
-            borderRadius: '10px', 
-            padding: '14px' 
-          }}>
-            <Text style={{ fontSize: '12px', color: '#6b7280', marginBottom: '8px' }}>Erro:</Text>
-            <Text style={{ fontSize: '11px', color: '#991b1b', fontFamily: 'monospace', wordBreak: 'break-all' }} selectable>
-              {typeof debugData.lastError === 'object' ? JSON.stringify(debugData.lastError, null, 2) : String(debugData.lastError)}
-            </Text>
-          </View>
-        </Card>
-      )}
-
-      <Card title={`Logs (${filteredLogs.length})`} icon="📜">
-        <View style={{ flexDirection: 'row', gap: '8px', marginBottom: '16px', flexWrap: 'wrap' }}>
-          {['ALL', 'SUCCESS', 'INFO', 'WARN', 'ERROR'].map((type) => (
-            <Button
-              key={type}
-              onClick={() => setFilterType(type as LogType | 'ALL')}
-              style={{
-                padding: '6px 12px',
-                borderRadius: '20px',
-                fontSize: '11px',
-                fontWeight: '600',
-                border: 'none',
-                backgroundColor: filterType === type ? (type === 'ALL' ? '#374151' : type === 'SUCCESS' ? '#10b981' : type === 'WARN' ? '#f59e0b' : '#ef4444') : '#f3f4f6',
-                color: filterType === type ? '#fff' : '#6b7280'
-              }}
-            >
-              {type}
-            </Button>
-          ))}
-        </View>
-
-        <View style={{ gap: '12px' }}>
-          {filteredLogs.length === 0 ? (
-            <Text style={{ fontSize: '13px', color: '#9ca3af', textAlign: 'center', padding: '20px' }}>
-              Nenhum log encontrado
-            </Text>
-          ) : (
-            filteredLogs.map((log, index) => {
-              const getLogColor = (t: string) => {
-                const type = t.toUpperCase();
-                if (type.includes('ERROR')) return '#ef4444';
-                if (type.includes('WARN') || type.includes('AVISO')) return '#f59e0b';
-                if (type.includes('SUCCESS') || type.includes('SUCESSO')) return '#10b981';
-                return '#3b82f6';
-              };
-
-              return (
-                <View 
-                    key={index} 
-                    style={{ 
-                      borderLeftWidth: '3px', 
-                      borderLeftColor: getLogColor(log.type), 
-                      borderLeftStyle: 'solid',
-                      padding: '12px 16px',
-                      backgroundColor: '#f9fafb',
-                      borderRadius: '0 10px 10px 0'
-                    }}
-                  >
-                    <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
-                      <Text style={{ fontSize: '12px', fontWeight: '700', color: getLogColor(log.type) }} selectable>
-                        [{log.type}]
-                      </Text>
-                      <Text style={{ fontSize: '10px', color: '#9ca3af' }} selectable>
-                        {new Date(log.timestamp).toLocaleTimeString('pt-BR')}
-                      </Text>
-                    </View>
-                    <Text style={{ fontSize: '13px', color: '#374151', marginBottom: '8px' }} selectable>
-                      {log.message}
-                    </Text>
-                    {log.data && (
-                      <Text style={{ fontSize: '11px', color: '#6b7280', fontFamily: 'monospace', wordBreak: 'break-all' }} selectable>
-                        {typeof log.data === 'object' ? JSON.stringify(log.data, null, 2) : String(log.data)}
-                      </Text>
-                    )}
-                </View>
-              );
-            })
-          )}
-        </View>
-      </Card>
-
-      <View style={{ height: '40px' }} />
     </ScrollView>
   );
 };

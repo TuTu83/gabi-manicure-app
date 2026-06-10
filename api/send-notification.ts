@@ -37,6 +37,28 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   console.log('[API] BODY:', req.body);
   console.log(`[${new Date().toISOString()}] [send-notification] Request received - Method: ${req.method} - Path: ${req.url}`);
 
+  // CORS Headers
+  const allowedOrigins = [
+    'https://localhost',
+    'capacitor://localhost',
+    'http://localhost:3000',
+    'http://localhost:5173',
+    'https://gabi-manicure-app.vercel.app'
+  ];
+  const origin = req.headers.origin || '';
+  if (allowedOrigins.includes(origin) || origin.startsWith('http://localhost') || origin.startsWith('https://localhost') || origin.startsWith('capacitor://localhost')) {
+    res.setHeader('Access-Control-Allow-Origin', origin);
+  }
+  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+  res.setHeader('Access-Control-Max-Age', '86400');
+
+  // Handle OPTIONS preflight request
+  if (req.method === 'OPTIONS') {
+    console.log(`[${new Date().toISOString()}] [send-notification] Handling OPTIONS preflight`);
+    return res.status(200).end();
+  }
+
   // Check for test endpoint
   if (req.url?.includes('/send-notification-test')) {
     console.log(`[${new Date().toISOString()}] [send-notification-test] Handling test request`);
@@ -53,10 +75,21 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
   try {
     // 2. Validate request body
-    const { title, body, fcmTokens, data = {} } = req.body || {};
+    const { title, body, fcmTokens, data = {}, test = false } = req.body || {};
 
     console.log("[API] Quantidade de tokens:", fcmTokens?.length);
-    console.log("[API] Payload completo:", JSON.stringify({ title, body, data, fcmTokens }));
+    console.log("[API] Payload completo:", JSON.stringify({ title, body, data, fcmTokens, test }));
+
+    // Test mode: Skip FCM and just return OK
+    if (test) {
+      console.log(`[${new Date().toISOString()}] [send-notification] Test mode enabled, skipping FCM`);
+      return res.status(200).json({
+        success: true,
+        test: true,
+        message: "Teste de conectividade OK!",
+        payloadReceived: { title, body, data, fcmTokens }
+      });
+    }
 
     if (!title || typeof title !== 'string') {
       console.log(`[${new Date().toISOString()}] [send-notification] Invalid title`);
@@ -92,6 +125,14 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       }
     }
     console.log("[API] Tokens únicos:", uniqueTokens.length);
+
+    // 🔴 FASE 2: Logs ANTES do sendEach()
+    console.log('FCM RESULT (ANTES do sendEach):');
+    console.log('Quantidade de tokens:', uniqueTokens.length);
+    console.log('Tokens (primeiros 20 caracteres):');
+    uniqueTokens.forEach((token, idx) => {
+      console.log(`- Token ${idx+1}: ${token.substring(0, 20)}...`);
+    });
 
     // 3. Check if Firebase is ready
     if (!firebaseReady) {
@@ -140,16 +181,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       }
     }));
 
-    console.log(`[FCM API] Sending ${messages.length} notifications...`);
-    console.log('[FCM API] Usando método sendEach() do Firebase Admin SDK');
-    console.log('[FCM API] Payload completo enviado ao Firebase:', JSON.stringify(messages, null, 2));
-    
     let fcmResult;
     try {
-      console.log("[API] Chamando Firebase sendEach()");
       fcmResult = await admin.messaging().sendEach(messages);
-      console.log("[API] Resposta recebida do Firebase");
-      console.log('[FCM RESULT]', JSON.stringify(fcmResult, null, 2));
     } catch (firebaseError) {
       console.error("[API] ERRO FIREBASE");
       console.error(firebaseError);
@@ -167,8 +201,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       });
     }
     
-    console.log('[FCM API] successCount:', fcmResult.successCount);
-    console.log('[FCM API] failureCount:', fcmResult.failureCount);
+    // 🔴 FASE 2: Logs DEPOIS do sendEach()
+    console.log('FCM RESULT (DEPOIS do sendEach):');
+    console.log('successCount:', fcmResult.successCount);
+    console.log('failureCount:', fcmResult.failureCount);
+    console.log('responses:', JSON.stringify(fcmResult.responses, null, 2));
     
     // Tabela final de diagnóstico e limpeza de tokens inválidos
     console.log('\n========== TABELA DE DIAGNÓSTICO ==========');
@@ -301,9 +338,20 @@ async function handleTestRequest(req: VercelRequest, res: VercelResponse) {
   }
 
   try {
-    const { title, body, fcmTokens, data = {} } = req.body || {};
+    const { title, body, fcmTokens, data = {}, test = false } = req.body || {};
     
-    console.log("[API] [Test] Payload completo recebido:", JSON.stringify({ title, body, data, fcmTokens }));
+    console.log("[API] [Test] Payload completo recebido:", JSON.stringify({ title, body, data, fcmTokens, test }));
+
+    // Test mode: Skip FCM and just return OK
+    if (test) {
+      console.log(`[${new Date().toISOString()}] [send-notification-test] Test mode enabled, skipping FCM`);
+      return res.status(200).json({
+        success: true,
+        test: true,
+        message: "Teste de conectividade OK!",
+        payloadReceived: { title, body, data, fcmTokens }
+      });
+    }
 
     if (!fcmTokens || !Array.isArray(fcmTokens) || fcmTokens.length === 0) {
       return res.status(400).json({ error: "fcmTokens is required" });

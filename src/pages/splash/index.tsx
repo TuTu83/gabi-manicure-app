@@ -1,8 +1,10 @@
 import React, { useEffect } from 'react';
 import { View, Text } from '@tarojs/components';
 import Taro from '@tarojs/taro';
-import { useAppStore } from '@/store/appStore';
+import { useAppStore, clearAppStorage } from '@/store/appStore';
 import { restoreSignedInProfile } from '@/services/authService';
+import { getFirebaseAuth } from '@/services/firebase';
+import { onAuthStateChanged, User } from 'firebase/auth';
 import styles from './index.module.scss';
 
 function SplashPage() {
@@ -12,10 +14,57 @@ function SplashPage() {
 
   useEffect(() => {
     let cancelled = false;
-    const run = async () => {
-      const nextUser = currentUser || (await restoreSignedInProfile());
+    const auth = getFirebaseAuth();
+    if (!auth) {
+      setTimeout(() => {
+        Taro.redirectTo({ url: '/pages/auth/login/index' });
+      }, 700);
+      return;
+    }
+
+    console.log('[AUTH DEBUG] Aguardando inicialização do Firebase Auth...');
+
+    const unsubscribe = onAuthStateChanged(auth, async (firebaseUser: User | null) => {
       if (cancelled) return;
-      if (!currentUser && nextUser) setCurrentUser(nextUser);
+
+      const firebaseUid = firebaseUser?.uid || null;
+      const localUid = currentUser?.id || null;
+      let motivo = '';
+
+      console.log('[AUTH DEBUG] Firebase Auth inicializado!');
+      console.log('[AUTH DEBUG] Firebase UID atual:', firebaseUid);
+      console.log('[AUTH DEBUG] UID salvo localmente:', localUid);
+
+      if (!firebaseUid) {
+        // NÃO TEM USUÁRIO NO FIREBASE: LIMPA TUDO!
+        console.log('[AUTH DEBUG] Nenhum usuário no Firebase Auth - LIMPANDO DADOS LOCAIS!');
+        try {
+          useAppStore.getState().signOut();
+          clearAppStorage();
+        } catch (e) {
+          console.error('[AUTH DEBUG] Erro ao limpar dados locais:', e);
+        }
+        motivo = 'Nenhum usuário Firebase autenticado';
+
+        setTimeout(() => {
+          Taro.redirectTo({ url: '/pages/auth/login/index' });
+        }, 700);
+        return;
+      }
+
+      // Firebase tem usuário autenticado: restaura perfil do Firestore
+      console.log('[AUTH DEBUG] Usuário Firebase encontrado - Restaurando perfil...');
+      const nextUser = await restoreSignedInProfile();
+      console.log('[AUTH DEBUG] Perfil restaurado:', nextUser ? nextUser.id : 'null');
+      motivo = nextUser ? 'Usuário Firebase válido, perfil restaurado' : 'Firebase Auth válido mas perfil não encontrado';
+
+      if (nextUser && (!currentUser || currentUser.id !== nextUser.id)) {
+        console.log('[AUTH DEBUG] Atualizando usuário no app store...');
+        setCurrentUser(nextUser);
+      }
+
+      console.log('[AUTH DEBUG] Motivo da navegação:', motivo);
+
       setTimeout(() => {
         if (nextUser) {
           Taro.switchTab({ url: '/pages/index/index' });
@@ -23,11 +72,11 @@ function SplashPage() {
           Taro.redirectTo({ url: '/pages/auth/login/index' });
         }
       }, 700);
-    };
-    run();
+    });
 
     return () => {
       cancelled = true;
+      unsubscribe();
     };
   }, [currentUser, setCurrentUser]);
 

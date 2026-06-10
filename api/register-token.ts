@@ -30,6 +30,28 @@ if (!admin.apps.length) {
 }
 
 export default async function handler(request: VercelRequest, response: VercelResponse) {
+  // CORS Headers
+  const allowedOrigins = [
+    'https://localhost',
+    'capacitor://localhost',
+    'http://localhost:3000',
+    'http://localhost:5173',
+    'https://gabi-manicure-app.vercel.app'
+  ];
+  const origin = request.headers.origin || '';
+  if (allowedOrigins.includes(origin) || origin.startsWith('http://localhost') || origin.startsWith('https://localhost') || origin.startsWith('capacitor://localhost')) {
+    response.setHeader('Access-Control-Allow-Origin', origin);
+  }
+  response.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+  response.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+  response.setHeader('Access-Control-Max-Age', '86400');
+
+  // Handle OPTIONS preflight request
+  if (request.method === 'OPTIONS') {
+    console.log(`[${new Date().toISOString()}] [register-token] Handling OPTIONS preflight`);
+    return response.status(200).end();
+  }
+
   if (request.method !== 'POST') return response.status(405).json({ error: 'Method not allowed' });
   if (!firebaseAdminInitialized || !db) return response.status(500).json({ error: 'Firebase Admin not initialized' });
 

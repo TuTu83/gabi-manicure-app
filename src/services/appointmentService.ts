@@ -28,7 +28,7 @@ const appointmentsKey = 'gm.appointments';
 const reviewsKey = 'gm.reviews';
 const waitlistKey = 'gm.waitlist';
 
-async function getUserFcmTokens(userId: string): Promise<string[]> {
+export async function getUserFcmTokens(userId: string): Promise<string[]> {
   try {
     console.log('[getUserFcmTokens] Starting for user:', userId);
     const db = getFirebaseDb();
@@ -63,7 +63,36 @@ async function getUserFcmTokens(userId: string): Promise<string[]> {
   }
 }
 
-async function sendFcmNotification({
+export async function testPing() {
+  const pingUrl = 'https://gabi-manicure-app.vercel.app/api/ping';
+  
+  console.log('TESTE PING URL:', pingUrl);
+  
+  try {
+    const response = await fetch(pingUrl, {
+      method: 'GET',
+      headers: { 'Accept': 'application/json' },
+      mode: 'cors',
+      credentials: 'omit',
+    });
+    
+    console.log('PING STATUS:', response.status);
+    
+    const body = await response.text();
+    console.log('PING BODY:', body);
+    
+    return { status: response.status, body };
+  } catch (error) {
+    console.error('PING ERROR', {
+      message: error?.message,
+      stack: error?.stack,
+      name: error?.name
+    });
+    throw error;
+  }
+}
+
+export async function sendFcmNotification({
   title,
   body,
   fcmTokens,
@@ -79,22 +108,12 @@ async function sendFcmNotification({
   const payload = { title, body, fcmTokens, data };
   const timestamp = Date.now();
 
-  console.log('[sendFcmNotification] função chamada');
-  console.log('[sendFcmNotification] tokens:', fcmTokens);
-  console.log('[sendFcmNotification] payload:', payload);
-  // Logs antes da chamada
-  console.log('[FCM CLIENT] Iniciando envio');
-  console.log('[FCM CLIENT] Usuário destino:', 'admin (admin)');
-  console.log('[FCM CLIENT] Tokens encontrados:', fcmTokens);
-  console.log('[FCM CLIENT] Quantidade de tokens:', fcmTokens?.length || 0);
-  console.log('[FCM CLIENT] Payload completo:', payload);
-  console.log('[sendFcmNotification] 🔄 Iniciando chamada...');
-  console.log('[sendFcmNotification] Endpoint:', apiUrl);
-  console.log('[sendFcmNotification] Payload:', payload);
-  console.log('[FETCH] URL completa:', apiUrl);
-  console.log('[FETCH] Método HTTP:', 'POST');
-  console.log('[FETCH] Headers:', { 'Content-Type': 'application/json' });
-  console.log('[FETCH] Body:', JSON.stringify(payload));
+  // 🔴 FASE 1: Logs EXATOS conforme pedido
+  console.log('ENVIANDO PUSH');
+  console.log('URL:', apiUrl);
+  console.log('PAYLOAD:', JSON.stringify(payload, null, 2));
+  console.log('Tokens FCM:', fcmTokens.map((t, i) => `${i+1}. ${t.substring(0, 20)}...`));
+  console.log('Quantidade de tokens:', fcmTokens.length);
   
   // Salvar na página de debug
   if (typeof window !== 'undefined') {
@@ -129,55 +148,82 @@ async function sendFcmNotification({
         debugWindow.__DEBUG_PUSH__.lastSendFlow.apiCalled = true;
       }
     }
-    const response = await fetch(apiUrl, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload),
-    });
-    
-    // Logs após a chamada
-    console.log('[FETCH] STATUS:', response.status);
-    console.log('[FETCH] OK:', response.ok);
-    
-    // Obter texto bruto para debug
-    const rawText = await response.text();
-    console.log('[FETCH] RESPONSE TEXT:', rawText);
-    
-    let result;
-    try {
-      result = JSON.parse(rawText);
-    } catch (parseError) {
-      console.error('[sendFcmNotification] erro ao parsear JSON:', parseError);
-      result = { rawText };
-    }
-    
-    console.log('[sendFcmNotification] resposta:', result);
-    
-    // Salvar na página de debug
-    if (typeof window !== 'undefined') {
-      const debugWindow = window as any;
-      debugWindow.__DEBUG_PUSH__.lastApiCall = {
-        url: apiUrl,
-        payload,
-        timestamp,
-        status: response.status,
-        response: result,
-      };
-      // Update lastSendFlow
-      debugWindow.__DEBUG_PUSH__.lastSendFlow.httpStatus = response.status;
-      debugWindow.__DEBUG_PUSH__.lastSendFlow.apiResponse = result;
-    }
 
-    if (!response.ok) {
-      throw new Error(`API error: ${response.status}`);
-    }
+    console.log('[sendFcmNotification] Tentando enviar requisição...');
     
-    return result;
+    // Tente 1: Usar fetch básico
+    try {
+      const method = 'POST';
+      const headers = {
+        'Accept': 'application/json',
+        'Content-Type': 'application/json'
+      };
+      
+      // Logs imediatamente antes do fetch
+      console.log('URL:', apiUrl);
+      console.log('método:', method);
+      console.log('headers:', headers);
+      console.log('payload:', payload);
+
+      const response = await fetch(apiUrl, {
+        method,
+        headers,
+        body: JSON.stringify(payload),
+        mode: 'cors',
+        credentials: 'omit',
+      });
+
+      console.log('STATUS:', response.status);
+      
+      const text = await response.text();
+      console.log('body:', text);
+      
+      let result: any;
+      
+      try {
+        result = JSON.parse(text);
+      } catch (e) {
+        result = { raw: text };
+      }
+
+      if (typeof window !== 'undefined') {
+        const debugWindow = window as any;
+        debugWindow.__DEBUG_PUSH__.lastApiCall = {
+          url: apiUrl,
+          payload,
+          timestamp,
+          status: response.status,
+          response: result,
+        };
+        debugWindow.__DEBUG_PUSH__.lastSendFlow.httpStatus = response.status;
+        debugWindow.__DEBUG_PUSH__.lastSendFlow.apiResponse = result;
+      }
+
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}: ${text}`);
+      }
+
+      return result;
+      
+    } catch (error) {
+      console.error('FETCH ERROR', {
+        message: error?.message,
+        stack: error?.stack,
+        name: error?.name
+      });
+      
+      throw error;
+    }
   } catch (error) {
     console.error('[FETCH] NETWORK ERROR:', error);
-    console.error('[FETCH] ERROR NAME:', error?.name);
-    console.error('[FETCH] ERROR MESSAGE:', error?.message);
+    console.error('[FETCH] ERROR NAME:', (error as any)?.name);
+    console.error('[FETCH] ERROR MESSAGE:', (error as any)?.message);
+    console.error('[FETCH] ERROR STACK:', (error as any)?.stack);
+    console.error('[FETCH] ERROR CAUSE:', (error as any)?.cause);
     console.error('[sendFcmNotification] ❌ Erro:', error);
+    
+    const isOnline = typeof navigator !== 'undefined' ? navigator.onLine : true;
+    console.log('[sendFcmNotification] navigator.onLine:', isOnline);
     
     // Salvar erro na página de debug
     if (typeof window !== 'undefined') {
@@ -188,9 +234,14 @@ async function sendFcmNotification({
         timestamp,
         status: 'error',
         error: String(error),
+        errorName: (error as any)?.name,
+        errorMessage: (error as any)?.message,
+        errorStack: (error as any)?.stack,
+        isOnline,
       };
       // Update lastSendFlow for error case
       debugWindow.__DEBUG_PUSH__.lastSendFlow.error = String(error);
+      debugWindow.__DEBUG_PUSH__.lastError = error;
     }
     
     throw error;

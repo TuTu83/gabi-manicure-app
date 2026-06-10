@@ -5,6 +5,7 @@ import {
   deleteDoc,
   doc,
   getDocs,
+  getDoc,
   limit,
   onSnapshot,
   orderBy,
@@ -13,6 +14,7 @@ import {
   updateDoc,
   where,
   arrayUnion,
+  arrayRemove,
 } from 'firebase/firestore';
 import { getFirebaseDb, isFirebaseConfigured, removeUndefinedFields } from '@/services/firebase';
 import { consumeRateLimit } from '@/services/storage';
@@ -40,6 +42,8 @@ export async function getAdminEmails(): Promise<string[]> {
 }
 
 export async function isAdminUser(user: UserProfile | null): Promise<boolean> {
+  // Check by role first, then fall back to email check
+  if (user?.role === 'admin') return true;
   const email = (user?.email || '').trim().toLowerCase();
   if (!email) return false;
   return email === ADMIN_EMAIL;
@@ -305,112 +309,195 @@ export async function updateUserFcmToken(userId: string, fcmToken: string): Prom
   const db = getFirebaseDb();
   if (!db) return;
   try {
-    // ArrayUnion para adicionar token sem duplicatas
+    // Get user data first to get role
+    const userDoc = await getDoc(doc(db, 'users', userId));
+    let userRole = 'user';
+    if (userDoc.exists()) {
+      const data = userDoc.data() as any;
+      userRole = data.role || 'user';
+    }
+    // Token metadata object for future use
+    const tokenMetadata = {
+      token: fcmToken,
+      userId,
+      role: userRole,
+      active: true,
+      createdAt: Date.now(),
+      updatedAt: Date.now()
+    };
+    // ArrayUnion para adicionar token sem duplicatas (backward compatible)
     await updateDoc(doc(db, 'users', userId), {
       fcmTokens: arrayUnion(fcmToken),
       updatedAt: Date.now()
     });
     // Mantemos o campo fcmToken para retrocompatibilidade
-    await setDoc(doc(db, 'users', userId), { fcmToken, updatedAt: Date.now() }, { merge: true });
+    await setDoc(doc(db, 'users', userId), { 
+      fcmToken, 
+      updatedAt: Date.now(),
+      // Also store tokens with metadata for future use
+      fcmTokensWithMetadata: arrayUnion(tokenMetadata)
+    }, { merge: true });
     console.log('[Admin] Token FCM salvo com sucesso para usuário:', userId);
   } catch (error) {
     console.error('[Admin] falha ao salvar token FCM', error);
   }
 }
 
-export async function getAdminFcmTokens(): Promise<string[]> {
-  console.log('[FCM DEBUG] getAdminFcmTokens() INICIO');
-  // Save to debug push
-  if (typeof window !== 'undefined') {
-    (window as any).__DEBUG_PUSH__ = (window as any).__DEBUG_PUSH__ || { logs: [], lastSent: null, lastReceived: null, lastError: null, lastTokenUpdate: null };
-    (window as any).__DEBUG_PUSH__.getAdminFcmTokens = { started: true, timestamp: Date.now() };
+export async function removeUserFcmToken(userId: string, fcmToken?: string): Promise<void> {
+  if (!isFirebaseConfigured()) return;
+  const db = getFirebaseDb();
+  if (!db) return;
+  try {
+    // First get the current user data to check the fcmToken field
+    const userDoc = await getDoc(doc(db, 'users', userId));
+    const userData = userDoc.exists() ? userDoc.data() : null;
+    
+    const updateData: any = {
+      updatedAt: Date.now()
+    };
+    
+    if (fcmToken) {
+      // Remove specific token from array
+      updateData.fcmTokens = arrayRemove(fcmToken);
+      
+      // Also clear the singular fcmToken field if it's the same token
+      if (userData?.fcmToken === fcmToken) {
+        updateData.fcmToken = null;
+      }
+    } else {
+      // Clear all tokens
+      updateData.fcmTokens = [];
+      updateData.fcmToken = null;
+    }
+    
+    await updateDoc(doc(db, 'users', userId), updateData);
+    console.log('[Admin] Token FCM removido com sucesso para usuário:', userId);
+  } catch (error) {
+    console.error('[Admin] falha ao remover token FCM', error);
   }
+}
+
+export async function getAdminFcmTokens(): Promise<string[]> {
+  console.log('[getAdminFcmTokens] INICIO (100% FILTRADO POR ROLE)');
   
   if (!isFirebaseConfigured()) {
-    console.warn('[FCM DEBUG] Firebase not configured, no admin tokens');
-    if (typeof window !== 'undefined') {
-      (window as any).__DEBUG_PUSH__.getAdminFcmTokens.error = 'Firebase not configured';
-    }
+    console.warn('[getAdminFcmTokens] Firebase não configurado');
     return [];
   }
   const db = getFirebaseDb();
   if (!db) {
-    console.warn('[FCM DEBUG] DB not available, no admin tokens');
-    if (typeof window !== 'undefined') {
-      (window as any).__DEBUG_PUSH__.getAdminFcmTokens.error = 'DB not available';
-    }
+    console.warn('[getAdminFcmTokens] DB não disponível');
     return [];
   }
+  
   try {
-    console.log('[FCM DEBUG] Buscando todos os usuários na coleção users');
     const snap = await getDocs(collection(db, 'users'));
-    console.log('[FCM DEBUG] Total de usuários encontrados:', snap.size);
+    console.log('[getAdminFcmTokens] Total de usuários no Firestore:', snap.size);
     
     const tokensSet = new Set<string>();
-    const adminUsers = [];
-    const maskedTokens = [];
+    const adminUsersList: any[] = [];
     
     snap.forEach(doc => {
       const data = doc.data() as any;
       const email = (data.email || '').toLowerCase();
-      const isAdminUser = (data.role === 'admin') || (email === ADMIN_EMAIL.toLowerCase());
       
-      if (isAdminUser) {
-        adminUsers.push({
+      // REGRA ABSOLUTA: só role === 'admin' OU email === ADMIN_EMAIL
+      const isStrictAdmin = (data.role === 'admin') || (email === ADMIN_EMAIL.toLowerCase());
+      
+      if (isStrictAdmin) {
+        adminUsersList.push({
           id: doc.id,
           email: data.email,
-          role: data.role,
-          hasFcmToken: !!data.fcmToken,
-          fcmTokensCount: Array.isArray(data.fcmTokens) ? data.fcmTokens.length : 0
+          role: data.role
         });
         
-        if (data.fcmTokens && Array.isArray(data.fcmTokens)) {
-          console.log('[FCM DEBUG] Processando fcmTokens[] do admin:', data.email, data.fcmTokens.length, 'tokens');
+        // Adiciona tokens SEM duplicatas
+        if (Array.isArray(data.fcmTokens)) {
           data.fcmTokens.forEach((token: string) => {
-            if (token) {
-              tokensSet.add(token);
-              maskedTokens.push(token.substring(0, 10) + '...');
-              console.log('[FCM DEBUG] Adicionando token do array:', token.substring(0, 15) + '...');
+            if (token && token.trim().length > 0) {
+              tokensSet.add(token.trim());
             }
           });
         }
-        if (data.fcmToken) {
-          console.log('[FCM DEBUG] Processando fcmToken do admin:', data.email);
-          tokensSet.add(data.fcmToken);
-          if (!maskedTokens.includes(data.fcmToken.substring(0, 10) + '...')) {
-            maskedTokens.push(data.fcmToken.substring(0, 10) + '...');
-          }
-          console.log('[FCM DEBUG] Adicionando token único:', data.fcmToken.substring(0, 15) + '...');
+        
+        if (data.fcmToken && data.fcmToken.trim().length > 0) {
+          tokensSet.add(data.fcmToken.trim());
         }
       }
     });
     
-    console.log('[FCM DEBUG] Usuários admin encontrados:', adminUsers);
-    
     const tokens = Array.from(tokensSet);
-    console.log('[FCM DEBUG] total tokens:', tokens.length);
-    console.log('[FCM DEBUG] tokens:', tokens);
-    console.log('[FCM DEBUG] getAdminFcmTokens() FIM');
-    
-    // Save to debug push
-    if (typeof window !== 'undefined') {
-      (window as any).__DEBUG_PUSH__.getAdminFcmTokens = {
-        completed: true,
-        totalUsers: snap.size,
-        adminCount: adminUsers.length,
-        tokenCount: tokens.length,
-        maskedTokens,
-        adminUsers,
-        timestamp: Date.now()
-      };
-    }
+    console.log('ADMIN TOKENS:');
+    console.log('ADMINS ENCONTRADOS:', adminUsersList.length);
+    console.log('TOKENS ADMIN (FILTRADOS):', tokens.length);
+    tokens.forEach((t, i) => console.log(`- Token ${i+1}: ${t.substring(0, 20)}...`));
     
     return tokens;
   } catch (error) {
-    console.error('[FCM DEBUG] falha ao obter tokens FCM do admin', error);
-    if (typeof window !== 'undefined') {
-      (window as any).__DEBUG_PUSH__.getAdminFcmTokens.error = String(error);
-    }
+    console.error('[getAdminFcmTokens] ERRO:', error);
+    return [];
+  }
+}
+
+export async function getAllClientFcmTokens(): Promise<string[]> {
+  console.log('[getAllClientFcmTokens] INICIO (100% FILTRADO POR ROLE)');
+  
+  if (!isFirebaseConfigured()) {
+    console.warn('[getAllClientFcmTokens] Firebase não configurado');
+    return [];
+  }
+  const db = getFirebaseDb();
+  if (!db) {
+    console.warn('[getAllClientFcmTokens] DB não disponível');
+    return [];
+  }
+  
+  try {
+    const snap = await getDocs(collection(db, 'users'));
+    console.log('[getAllClientFcmTokens] Total de usuários no Firestore:', snap.size);
+    
+    const tokensSet = new Set<string>();
+    const clientUsersList: any[] = [];
+    
+    snap.forEach(doc => {
+      const data = doc.data() as any;
+      const email = (data.email || '').toLowerCase();
+      
+      // REGRA ABSOLUTA: só role === 'client' OU (role === 'user' E email !== ADMIN_EMAIL)
+      const isStrictClient = (data.role === 'client') || 
+                             ((data.role === 'user' || !data.role) && email !== ADMIN_EMAIL.toLowerCase());
+      
+      if (isStrictClient) {
+        clientUsersList.push({
+          id: doc.id,
+          email: data.email,
+          role: data.role
+        });
+        
+        // Adiciona tokens SEM duplicatas
+        if (Array.isArray(data.fcmTokens)) {
+          data.fcmTokens.forEach((token: string) => {
+            if (token && token.trim().length > 0) {
+              tokensSet.add(token.trim());
+            }
+          });
+        }
+        
+        if (data.fcmToken && data.fcmToken.trim().length > 0) {
+          tokensSet.add(data.fcmToken.trim());
+        }
+      }
+    });
+    
+    const tokens = Array.from(tokensSet);
+    console.log('CLIENT TOKENS:');
+    console.log('CLIENTES ENCONTRADOS:', clientUsersList.length);
+    console.log('TOKENS CLIENTES (FILTRADOS):', tokens.length);
+    tokens.forEach((t, i) => console.log(`- Token ${i+1}: ${t.substring(0, 20)}...`));
+    
+    return tokens;
+  } catch (error) {
+    console.error('[getAllClientFcmTokens] ERRO:', error);
     return [];
   }
 }

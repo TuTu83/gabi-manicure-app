@@ -3,6 +3,27 @@ import { addDoc, collection, doc, onSnapshot, query, updateDoc, where } from 'fi
 import { getFirebaseDb, isFirebaseConfigured, removeUndefinedFields } from '@/services/firebase';
 import type { Appointment, InAppNotification, NotificationType } from '@/types/booking';
 import { getLocalSettings } from '@/services/settingsService';
+import { getUserFcmTokens, sendFcmNotification } from './appointmentService';
+
+// Função temporária de teste para enviar notificação diretamente
+export async function enviarPushTeste(token: string): Promise<any> {
+  console.log('[TESTE PUSH] Iniciando função enviarPushTeste');
+  
+  const payload = {
+    title: 'TESTE PUSH',
+    body: 'Se você recebeu isso, o FCM Android está funcionando!',
+    fcmTokens: [token],
+    data: { type: 'test_push' },
+  };
+  
+  console.log('[TESTE PUSH] Payload a enviar:', payload);
+  
+  const result = await sendFcmNotification(payload);
+  
+  console.log('[TESTE PUSH] Resultado do envio:', result);
+  
+  return result;
+}
 
 type Unsubscribe = () => void;
 
@@ -111,6 +132,136 @@ export async function createNotification(params: {
   if (!db) throw new Error('Firebase indisponível');
   const docRef = await addDoc(collection(db, 'notifications'), payload);
   return docRef.id;
+}
+
+/**
+ * Send notification ONLY to ADMINS
+ */
+export async function sendToAdminOnly(
+  title: string,
+  body: string,
+  data?: Record<string, any>
+): Promise<any> {
+  try {
+    console.log('[sendToAdminOnly] Sending notification to admins only');
+    const { getAdminFcmTokens } = await import('./adminService');
+    const adminTokens = await getAdminFcmTokens();
+    
+    if (adminTokens.length === 0) {
+      console.warn('[sendToAdminOnly] No admin tokens found');
+      return { success: false, message: 'No admin tokens found' };
+    }
+    
+    console.log('[sendToAdminOnly] Admin tokens found:', adminTokens.length);
+    const result = await sendFcmNotification({ title, body, fcmTokens: adminTokens, data });
+    console.log('[sendToAdminOnly] Notification sent successfully');
+    return result;
+  } catch (error) {
+    console.error('[sendToAdminOnly] Error sending to admins:', error);
+    throw error;
+  }
+}
+
+/**
+ * Send notification ONLY to a SPECIFIC CLIENT
+ */
+export async function sendToClientOnly(
+  userId: string,
+  title: string,
+  body: string,
+  data?: Record<string, any>
+): Promise<any> {
+  try {
+    console.log('[sendToClientOnly] Sending notification to client:', userId);
+    const userTokens = await getUserFcmTokens(userId);
+    
+    if (userTokens.length === 0) {
+      console.warn('[sendToClientOnly] No tokens found for client:', userId);
+      return { success: false, message: 'No tokens found for client' };
+    }
+    
+    console.log('[sendToClientOnly] Client tokens found:', userTokens.length);
+    const result = await sendFcmNotification({ title, body, fcmTokens: userTokens, data });
+    console.log('[sendToClientOnly] Notification sent successfully');
+    return result;
+  } catch (error) {
+    console.error('[sendToClientOnly] Error sending to client:', error);
+    throw error;
+  }
+}
+
+/**
+ * Send notification to a specific user (alias for sendToClientOnly for backward compatibility)
+ */
+export async function sendNotificationToUser(
+  userId: string,
+  title: string,
+  body: string,
+  data?: Record<string, any>
+): Promise<any> {
+  return sendToClientOnly(userId, title, body, data);
+}
+
+/**
+ * Send notification to all admins (alias for sendToAdminOnly for backward compatibility)
+ */
+export async function sendNotificationToAdmins(
+  title: string,
+  body: string,
+  data?: Record<string, any>
+): Promise<any> {
+  return sendToAdminOnly(title, body, data);
+}
+
+/**
+ * Send notification ONLY to ALL CLIENTS (for promotions)
+ */
+export async function sendToAllClients(
+  title: string,
+  body: string,
+  data?: Record<string, any>
+): Promise<any> {
+  try {
+    console.log('[sendToAllClients] Sending notification to all clients');
+    const { getAllClientFcmTokens } = await import('./adminService');
+    const clientTokens = await getAllClientFcmTokens();
+    
+    if (clientTokens.length === 0) {
+      console.warn('[sendToAllClients] No client tokens found');
+      return { success: false, message: 'No client tokens found' };
+    }
+    
+    console.log('[sendToAllClients] Client tokens found:', clientTokens.length);
+    const result = await sendFcmNotification({ title, body, fcmTokens: clientTokens, data });
+    console.log('[sendToAllClients] Notification sent successfully');
+    return result;
+  } catch (error) {
+    console.error('[sendToAllClients] Error sending to all clients:', error);
+    throw error;
+  }
+}
+
+/**
+ * Send notification to all clients (alias for sendToAllClients for backward compatibility)
+ */
+export async function sendNotificationToAllClients(
+  title: string,
+  body: string,
+  data?: Record<string, any>
+): Promise<any> {
+  return sendToAllClients(title, body, data);
+}
+
+/**
+ * Send notification to a specific user (generic, but prefer role-specific functions)
+ */
+export async function sendToSpecificUser(
+  userId: string,
+  title: string,
+  body: string,
+  data?: Record<string, any>
+): Promise<any> {
+  return sendToClientOnly(userId, title, body, data);
 }
 
 export async function markNotificationRead(id: string): Promise<void> {

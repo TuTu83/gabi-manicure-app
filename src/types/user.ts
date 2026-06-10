@@ -8,11 +8,12 @@ export interface UserProfile {
   email?: string;
   provider: AuthProvider;
   createdAt: number;
-  role?: 'admin' | 'user';
+  role: 'admin' | 'client';
   vip?: boolean;
   blocked?: boolean;
   adminNotes?: string;
   fcmToken?: string;
+  fcmTokens?: string[];
 }
 
 export interface RegisterDraft {
