@@ -509,6 +509,7 @@ export async function createAppointment(input: Omit<Appointment, 'id' | 'created
   }
 
   // Send FCM notifications
+  console.log('CREATE STEP 1');
   console.log('=== FLUXO AGENDAMENTO ===');
   console.log('[FLOW] CHEGOU NO ENVIO DE NOTIFICAÇÃO');
   console.log('[AGENDAMENTO] Iniciando envio de notificação');
@@ -541,6 +542,7 @@ export async function createAppointment(input: Omit<Appointment, 'id' | 'created
     };
   }
   try {
+    console.log('CREATE STEP 2');
     console.log('[createAppointment] Step: calling getAdminFcmTokens()');
     if (typeof window !== 'undefined') {
       (window as any).__DEBUG_PUSH__.lastSendFlow.currentStep = 'calling_getAdminFcmTokens';
@@ -578,6 +580,7 @@ export async function createAppointment(input: Omit<Appointment, 'id' | 'created
     }
     
     if (tokensToSend.length > 0) {
+      console.log('CREATE STEP 3');
       console.log('[createAppointment] Step: calling sendFcmNotification()');
       console.log('[FLOW] EXECUTANDO sendFcmNotification');
       if (typeof window !== 'undefined') {
@@ -595,14 +598,16 @@ export async function createAppointment(input: Omit<Appointment, 'id' | 'created
         },
       };
 
-      console.log('URL API:', apiUrl);
+      console.log('URL API:', 'https://gabi-manicure-app.vercel.app/api/send-notification');
       console.log('PAYLOAD:', payload);
+      console.log('ANTES SENDFCM');
       
       if (typeof window !== 'undefined') {
         (window as any).__DEBUG_PUSH__.lastSendFlow.payloadSent = payload;
       }
       
       const sendResult = await sendFcmNotification(payload);
+      console.log('DEPOIS SENDFCM');
       console.log('[FLOW] RESULTADO DO ENVIO', sendResult);
       console.log('[createAppointment] sendFcmNotification completed');
       if (typeof window !== 'undefined') {
