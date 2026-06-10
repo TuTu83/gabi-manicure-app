@@ -1,8 +1,8 @@
 import Taro from '@tarojs/taro';
 import { addDoc, collection } from 'firebase/firestore';
 import { getFirebaseDb, isFirebaseConfigured, removeUndefinedFields } from '@/services/firebase';
-import type { AdminLogRecord } from '@/types/adminLog';
-import type { UserProfile } from '@/types/user';
+import { AdminLogRecord } from '@/types/adminLog';
+import { UserProfile } from '@/types/user';
 
 const localKey = 'gm.adminLogs';
 

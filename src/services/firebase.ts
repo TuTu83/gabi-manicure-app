@@ -1,8 +1,8 @@
-import { initializeApp, getApps, type FirebaseApp } from 'firebase/app';
-import { browserLocalPersistence, getAuth, setPersistence, type Auth } from 'firebase/auth';
-import { getFirestore, type Firestore } from 'firebase/firestore';
-import { getStorage, type FirebaseStorage } from 'firebase/storage';
-import { getMessaging, getToken, onMessage, isSupported, type Messaging } from 'firebase/messaging';
+import { initializeApp, getApps, FirebaseApp } from 'firebase/app';
+import { browserLocalPersistence, getAuth, setPersistence, Auth } from 'firebase/auth';
+import { getFirestore, Firestore } from 'firebase/firestore';
+import { getStorage, FirebaseStorage } from 'firebase/storage';
+import { getMessaging, getToken, onMessage, isSupported, Messaging } from 'firebase/messaging';
 
 declare const __GM_FIREBASE_ENV__: any;
 declare const __GM_FIREBASE_DEBUG__: any;

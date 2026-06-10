@@ -15,6 +15,7 @@ import type { AppointmentNegotiation, NegotiationStatus, Appointment } from '@/t
 import { safeGetStorage, safeSetStorage } from '@/services/storage';
 import { getUserFcmTokens, sendFcmNotification } from '@/services/appointmentService';
 import { getAdminFcmTokens } from '@/services/adminService';
+import { createNotification } from '@/services/notificationService';
 import dayjs from 'dayjs';
 
 const NEGOTIATIONS_KEY = 'appointmentNegotiations';
@@ -25,24 +26,40 @@ export async function createNegotiation({
   adminId,
   newStartAt,
   newEndAt,
+  suggestedSlots,
   message,
 }: {
   appointmentId: string;
   clientId: string;
   adminId: string;
-  newStartAt: number;
-  newEndAt: number;
+  newStartAt?: number;
+  newEndAt?: number;
+  suggestedSlots?: Array<{ startAt: number; endAt: number }>;
   message?: string;
 }): Promise<AppointmentNegotiation> {
   const now = Date.now();
+  
+  // If suggestedSlots is provided, use the first one as newStartAt/newEndAt for backward compatibility
+  let finalNewStartAt = newStartAt;
+  let finalNewEndAt = newEndAt;
+  if (suggestedSlots && suggestedSlots.length > 0) {
+    finalNewStartAt = suggestedSlots[0].startAt;
+    finalNewEndAt = suggestedSlots[0].endAt;
+  }
+  
+  // Ensure we have valid start and end times
+  if (finalNewStartAt === undefined || finalNewEndAt === undefined) {
+    throw new Error('Either newStartAt/newEndAt or suggestedSlots must be provided');
+  }
   
   const negotiationData: Omit<AppointmentNegotiation, 'id'> = {
     appointmentId,
     clientId,
     adminId,
     status: 'pending',
-    newStartAt,
-    newEndAt,
+    newStartAt: finalNewStartAt,
+    newEndAt: finalNewEndAt,
+    suggestedSlots,
     message,
     createdAt: now,
     updatedAt: now,
@@ -69,9 +86,21 @@ export async function createNegotiation({
   // Send push notification to client
   try {
     const clientTokens = await getUserFcmTokens(clientId);
-    const dateStr = dayjs(newStartAt).format('DD/MM/YYYY');
-    const timeStr = dayjs(newStartAt).format('HH:mm');
+    const firstSlot = suggestedSlots?.[0] || { startAt: finalNewStartAt, endAt: finalNewEndAt };
+    const dateStr = dayjs(firstSlot.startAt).format('DD/MM/YYYY');
+    const timeStr = dayjs(firstSlot.startAt).format('HH:mm');
     
+    // Create in-app notification for client
+    await createNotification({
+      target: 'cliente',
+      targetUserId: clientId,
+      type: 'proposta_alteracao_horario',
+      title: 'Proposta de Alteração de Horário',
+      body: `Nova proposta de horário para ${dateStr} às ${timeStr}`,
+      appointmentId,
+      negotiationId: docRef.id,
+    });
+
     await sendFcmNotification({
       title: 'Proposta de Alteração de Horário',
       body: `Nova proposta de horário para ${dateStr} às ${timeStr}`,
@@ -130,6 +159,8 @@ export async function updateNegotiationStatus(
     newStartAt?: number;
     newEndAt?: number;
     message?: string;
+    suggestedSlots?: Array<{ startAt: number; endAt: number }>;
+    selectedSlot?: { startAt: number; endAt: number };
   }
 ): Promise<void> {
   const now = Date.now();
@@ -141,6 +172,8 @@ export async function updateNegotiationStatus(
   if (options?.newStartAt) updateData.newStartAt = options.newStartAt;
   if (options?.newEndAt) updateData.newEndAt = options.newEndAt;
   if (options?.message) updateData.message = options.message;
+  if (options?.suggestedSlots) updateData.suggestedSlots = options.suggestedSlots;
+  if (options?.selectedSlot) updateData.selectedSlot = options.selectedSlot;
 
   if (!isFirebaseConfigured()) {
     const allNegotiations = safeGetStorage<AppointmentNegotiation[]>(NEGOTIATIONS_KEY) || [];
@@ -162,10 +195,14 @@ export async function acceptNegotiation(
   negotiation: AppointmentNegotiation,
   appointment: Appointment
 ): Promise<void> {
+  // Determine which slot to use: selectedSlot first, then newStartAt/newEndAt
+  const slotToUse = negotiation.selectedSlot || { startAt: negotiation.newStartAt, endAt: negotiation.newEndAt };
+  
   if (!isFirebaseConfigured()) {
     await updateNegotiationStatus(negotiation.id, 'completed', {
-      newStartAt: negotiation.newStartAt,
-      newEndAt: negotiation.newEndAt,
+      newStartAt: slotToUse.startAt,
+      newEndAt: slotToUse.endAt,
+      selectedSlot: slotToUse,
     });
     return;
   }
@@ -178,12 +215,13 @@ export async function acceptNegotiation(
     tx.update(doc(dbRef, 'appointmentNegotiations', negotiation.id), {
       status: 'completed',
       updatedAt: Date.now(),
+      selectedSlot: slotToUse,
     });
 
     // 2. Update original appointment
     tx.update(doc(dbRef, 'appointments', appointment.id), {
-      startAt: negotiation.newStartAt,
-      endAt: negotiation.newEndAt,
+      startAt: slotToUse.startAt,
+      endAt: slotToUse.endAt,
       updatedAt: Date.now(),
     });
   });
@@ -191,8 +229,8 @@ export async function acceptNegotiation(
   // Send push notification to client
   try {
     const clientTokens = await getUserFcmTokens(negotiation.clientId);
-    const dateStr = dayjs(negotiation.newStartAt).format('DD/MM/YYYY');
-    const timeStr = dayjs(negotiation.newStartAt).format('HH:mm');
+    const dateStr = dayjs(slotToUse.startAt).format('DD/MM/YYYY');
+    const timeStr = dayjs(slotToUse.startAt).format('HH:mm');
     
     await sendFcmNotification({
       title: 'Alteração de Horário Confirmada!',
@@ -216,19 +254,37 @@ export async function respondToNegotiation(
     newStartAt?: number;
     newEndAt?: number;
     message?: string;
+    selectedSlot?: { startAt: number; endAt: number };
   }
 ): Promise<void> {
   const now = Date.now();
 
   if (response === 'accept') {
-    // First update negotiation to accepted
-    await updateNegotiationStatus(negotiation.id, 'accepted');
+    // Determine which slot to use
+    const slotToUse = options?.selectedSlot || negotiation.selectedSlot || { startAt: negotiation.newStartAt, endAt: negotiation.newEndAt };
+    
+    // First update negotiation to accepted with selected slot
+    await updateNegotiationStatus(negotiation.id, 'accepted', {
+      selectedSlot: slotToUse,
+      newStartAt: slotToUse.startAt,
+      newEndAt: slotToUse.endAt,
+    });
+    
+    // Create in-app notification for admin
+    const dateStr = dayjs(slotToUse.startAt).format('DD/MM/YYYY');
+    const timeStr = dayjs(slotToUse.startAt).format('HH:mm');
+    await createNotification({
+      target: 'admin',
+      type: 'resposta_proposta_aceita',
+      title: 'Proposta Aceita!',
+      body: `Cliente aceitou a proposta de horário para ${dateStr} às ${timeStr}`,
+      appointmentId: negotiation.appointmentId,
+      negotiationId: negotiation.id,
+    });
     
     // Send push notification to admin
     try {
       const adminTokens = await getAdminFcmTokens();
-      const dateStr = dayjs(negotiation.newStartAt).format('DD/MM/YYYY');
-      const timeStr = dayjs(negotiation.newStartAt).format('HH:mm');
       
       await sendFcmNotification({
         title: 'Proposta Aceita!',
@@ -250,11 +306,21 @@ export async function respondToNegotiation(
       message: options.message,
     });
 
+    // Create in-app notification for admin
+    const dateStr = dayjs(options.newStartAt).format('DD/MM/YYYY');
+    const timeStr = dayjs(options.newStartAt).format('HH:mm');
+    await createNotification({
+      target: 'admin',
+      type: 'contraproposta_horario',
+      title: 'Contraproposta de Horário',
+      body: `Cliente sugeriu ${dateStr} às ${timeStr}`,
+      appointmentId: negotiation.appointmentId,
+      negotiationId: negotiation.id,
+    });
+    
     // Send push notification to admin
     try {
       const adminTokens = await getAdminFcmTokens();
-      const dateStr = dayjs(options.newStartAt).format('DD/MM/YYYY');
-      const timeStr = dayjs(options.newStartAt).format('HH:mm');
       
       await sendFcmNotification({
         title: 'Contraproposta de Horário',
@@ -272,6 +338,16 @@ export async function respondToNegotiation(
   } else {
     // Reject
     await updateNegotiationStatus(negotiation.id, 'rejected');
+    
+    // Create in-app notification for admin
+    await createNotification({
+      target: 'admin',
+      type: 'resposta_proposta_recusada',
+      title: 'Proposta Recusada',
+      body: 'Cliente recusou sua proposta de alteração de horário',
+      appointmentId: negotiation.appointmentId,
+      negotiationId: negotiation.id,
+    });
 
     // Send push notification to admin
     try {

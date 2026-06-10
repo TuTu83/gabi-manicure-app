@@ -1,4 +1,4 @@
-import type { PaymentMethod } from '@/types/finance';
+import { PaymentMethod } from '@/types/finance';
 
 export type AppointmentStatus = 'pendente' | 'confirmado' | 'cancelado' | 'recusado' | 'concluido';
 
@@ -101,8 +101,10 @@ export interface AppointmentNegotiation {
   clientId: string;
   adminId: string;
   status: NegotiationStatus;
-  newStartAt: number; // timestamp in ms
-  newEndAt: number; // timestamp in ms
+  newStartAt: number; // timestamp in ms (for backward compatibility, or single slot)
+  newEndAt: number; // timestamp in ms (for backward compatibility, or single slot)
+  suggestedSlots?: Array<{ startAt: number; endAt: number }>; // multiple slots
+  selectedSlot?: { startAt: number; endAt: number }; // client selected slot
   message?: string;
   createdAt: number;
   updatedAt: number;
@@ -131,4 +133,5 @@ export interface InAppNotification {
   deliveredAt?: number;
   readAt?: number;
   appointmentId?: string;
+  negotiationId?: string;
 }

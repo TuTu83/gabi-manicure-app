@@ -1,7 +1,7 @@
 import Taro from '@tarojs/taro';
 import { addDoc, collection, doc, onSnapshot, query, updateDoc, where } from 'firebase/firestore';
 import { getFirebaseDb, isFirebaseConfigured, removeUndefinedFields } from '@/services/firebase';
-import type { Appointment, InAppNotification, NotificationType } from '@/types/booking';
+import { Appointment, InAppNotification, NotificationType } from '@/types/booking';
 import { getLocalSettings } from '@/services/settingsService';
 import { getUserFcmTokens, sendFcmNotification } from './appointmentService';
 
@@ -109,6 +109,7 @@ export async function createNotification(params: {
   title: string;
   body: string;
   appointmentId?: string;
+  negotiationId?: string;
 }): Promise<string | undefined> {
   const payloadRaw: Omit<InAppNotification, 'id'> & { deliveredAt?: number } = {
     target: params.target,
@@ -118,6 +119,7 @@ export async function createNotification(params: {
     body: params.body,
     createdAt: Date.now(),
     appointmentId: params.appointmentId,
+    negotiationId: params.negotiationId,
   };
   const payload = removeUndefinedFields(payloadRaw);
 

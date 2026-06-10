@@ -526,10 +526,13 @@ const handleNotificationAction = (action: ActionPerformed) => {
 
   log('Lidando com ação de notificação', { actionId: action.actionId, data });
 
-  // Aqui você pode adicionar navegação para telas específicas
-  if (data?.appointmentId) {
+  // Navega para a tela de negociação se houver negotiationId
+  if (data?.negotiationId) {
+    log('Navegando para negociação', { negotiationId: data.negotiationId });
+    Taro.navigateTo({ url: `/pages/negotiation-detail/index?negotiationId=${data.negotiationId}` });
+  } else if (data?.appointmentId) {
     log('Navegando para agendamento', { appointmentId: data.appointmentId });
-    // Exemplo de navegação: import Taro from '@tarojs/taro'; Taro.navigateTo({ url: '/pages/booking/index?appointmentId=' + data.appointmentId });
+    Taro.navigateTo({ url: `/pages/booking/index?appointmentId=${data.appointmentId}` });
   }
 };
 

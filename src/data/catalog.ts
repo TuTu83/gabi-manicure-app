@@ -1,4 +1,4 @@
-import type { Professional, Promotion, ServiceItem } from '@/types/booking';
+import { Professional, Promotion, ServiceItem } from '@/types/booking';
 
 export const mockServices: ServiceItem[] = [
   {

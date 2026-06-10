@@ -2,7 +2,7 @@ import Taro from '@tarojs/taro';
 import { doc, onSnapshot, setDoc } from 'firebase/firestore';
 import { getFirebaseDb, isFirebaseConfigured } from '@/services/firebase';
 import { consumeRateLimit } from '@/services/storage';
-import type { AppSettings } from '@/types/settings';
+import { AppSettings } from '@/types/settings';
 
 type Unsubscribe = () => void;
 

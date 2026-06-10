@@ -8,7 +8,7 @@ import { markNotificationRead, subscribeNotificationsForUser } from '@/services/
 import { openAdminWhatsApp } from '@/services/whatsappService';
 import { isAdminUser } from '@/services/adminService';
 import { useAppStore } from '@/store/appStore';
-import type { Appointment, InAppNotification } from '@/types/booking';
+import { Appointment, InAppNotification } from '@/types/booking';
 import styles from './index.module.scss';
 
 function ProfilePage() {
@@ -185,7 +185,9 @@ function ProfilePage() {
                     try {
                       await markNotificationRead(n.id);
                     } finally {
-                      if (n.appointmentId) {
+                      if (n.negotiationId) {
+                        Taro.navigateTo({ url: `/pages/negotiation-detail/index?negotiationId=${n.negotiationId}` });
+                      } else if (n.appointmentId) {
                         Taro.switchTab({ url: '/pages/booking/index' });
                       }
                     }

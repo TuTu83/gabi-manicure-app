@@ -1,7 +1,7 @@
 import { create } from 'zustand';
 import { safeGetStorage, safeRemoveStorage, safeSetStorage, storageKeys } from '@/services/storage';
-import type { RegisterDraft, ResetDraft, UserProfile } from '@/types/user';
-import type { AppSettings } from '@/types/settings';
+import { RegisterDraft, ResetDraft, UserProfile } from '@/types/user';
+import { AppSettings } from '@/types/settings';
 import { getLocalSettings } from '@/services/settingsService';
 
 export type ThemeMode = 'light' | 'dark';

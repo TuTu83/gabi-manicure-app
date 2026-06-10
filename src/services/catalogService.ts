@@ -1,6 +1,6 @@
 import { collection, getDocs } from 'firebase/firestore';
 import { getFirebaseDb, isFirebaseConfigured } from '@/services/firebase';
-import type { Professional, Promotion, ServiceItem } from '@/types/booking';
+import { Professional, Promotion, ServiceItem } from '@/types/booking';
 import { mockProfessionals, mockPromotions } from '@/data/catalog';
 
 export async function fetchServices(): Promise<ServiceItem[]> {

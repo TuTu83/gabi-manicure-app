@@ -45,6 +45,15 @@
   transition: all $transition-base;
 }
 
+.sectionTitle {
+  display: block;
+  font-size: 28rpx;
+  font-weight: $font-weight-semibold;
+  color: var(--color-text-primary);
+  margin-bottom: 16rpx;
+  margin-top: 8rpx;
+}
+
 .infoRow {
   display: flex;
   justify-content: space-between;

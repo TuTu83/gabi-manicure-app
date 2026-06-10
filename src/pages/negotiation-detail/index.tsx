@@ -1,10 +1,11 @@
 import { useEffect, useState } from 'react';
 import { Button, Input, Picker, ScrollView, Text, View } from '@tarojs/components';
 import Taro from '@tarojs/taro';
-import { getAuthStore } from '@/store/appStore';
-import { getNegotiationById, respondToNegotiation } from '@/services/negotiationService';
-import { formatDateLabel, formatTime } from '@/services/appointmentService';
-import type { AppointmentNegotiation } from '@/types/booking';
+import { useAppStore } from '@/store/appStore';
+import { getNegotiationById, respondToNegotiation, acceptNegotiation } from '@/services/negotiationService';
+import { getAppointmentById, formatDateLabel, formatTime } from '@/services/appointmentService';
+import { isAdminUser } from '@/services/adminService';
+import { AppointmentNegotiation, Appointment } from '@/types/booking';
 import styles from './index.module.scss';
 
 function toISODate(ms: number): string {
@@ -12,23 +13,33 @@ function toISODate(ms: number): string {
 }
 
 export default function NegotiationDetailPage() {
-  const authStore = getAuthStore();
+  const currentUser = useAppStore(s => s.currentUser);
   const [loading, setLoading] = useState(true);
   const [negotiation, setNegotiation] = useState<AppointmentNegotiation | null>(null);
+  const [appointment, setAppointment] = useState<Appointment | null>(null);
+  const [isAdmin, setIsAdmin] = useState(false);
   const [showCounterOffer, setShowCounterOffer] = useState(false);
   const [counterDateMs, setCounterDateMs] = useState(Date.now());
   const [counterStartTime, setCounterStartTime] = useState<number | null>(null);
   const [counterMessage, setCounterMessage] = useState('');
+  const [selectedSlot, setSelectedSlot] = useState<{ startAt: number; endAt: number } | null>(null);
   const [busy, setBusy] = useState(false);
 
   useEffect(() => {
+    // Check if user is admin
+    const checkAdmin = async () => {
+      const admin = await isAdminUser(currentUser);
+      setIsAdmin(admin);
+    };
+    checkAdmin();
+    
     const params = Taro.getCurrentInstance().router?.params || {};
     const negotiationId = params.negotiationId || params.id;
     
     if (negotiationId) {
       loadNegotiation(negotiationId);
     }
-  }, []);
+  }, [currentUser]);
 
   const loadNegotiation = async (negotiationId: string) => {
     try {
@@ -36,6 +47,15 @@ export default function NegotiationDetailPage() {
       setNegotiation(data);
       if (data) {
         setCounterDateMs(data.newStartAt);
+        // Load original appointment
+        const appt = await getAppointmentById(data.appointmentId);
+        setAppointment(appt);
+        // If there are suggested slots, set default selected slot
+        if (data.suggestedSlots && data.suggestedSlots.length > 0) {
+          setSelectedSlot(data.suggestedSlots[0]);
+        } else {
+          setSelectedSlot({ startAt: data.newStartAt, endAt: data.newEndAt });
+        }
       }
     } catch (error) {
       console.error('Failed to load negotiation:', error);
@@ -71,12 +91,28 @@ export default function NegotiationDetailPage() {
     
     setBusy(true);
     try {
-      await respondToNegotiation(negotiation, 'accept');
+      await respondToNegotiation(negotiation, 'accept', { selectedSlot: selectedSlot || undefined });
       Taro.showToast({ title: 'Proposta aceita!', icon: 'success' });
       await loadNegotiation(negotiation.id);
     } catch (error) {
       console.error('Failed to accept:', error);
       Taro.showToast({ title: 'Erro ao aceitar', icon: 'none' });
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const handleAdminAccept = async () => {
+    if (!negotiation || !appointment || busy) return;
+    
+    setBusy(true);
+    try {
+      await acceptNegotiation(negotiation, appointment);
+      Taro.showToast({ title: 'Alteração confirmada!', icon: 'success' });
+      await loadNegotiation(negotiation.id);
+    } catch (error) {
+      console.error('Failed to accept as admin:', error);
+      Taro.showToast({ title: 'Erro ao confirmar', icon: 'none' });
     } finally {
       setBusy(false);
     }
@@ -149,11 +185,38 @@ export default function NegotiationDetailPage() {
   return (
     <View className={styles.container}>
       <View className={styles.header}>
-        <Text className={styles.title}>Proposta de Alteração</Text>
+        <Text className={styles.title}>{isAdmin ? 'Negociação de Horário' : 'Proposta de Alteração'}</Text>
         <Text className={styles.desc}>
-          O salão propôs um novo horário para o seu atendimento.
+          {isAdmin 
+            ? 'Gerencie a proposta de alteração de horário do cliente.' 
+            : 'O salão propôs novos horários para o seu atendimento.'}
         </Text>
       </View>
+
+      {/* Original Appointment Info */}
+      {appointment && (
+        <View className={styles.infoCard}>
+          <Text className={styles.sectionTitle}>Agendamento Original</Text>
+          <View className={styles.infoRow}>
+            <Text className={styles.infoLabel}>Data</Text>
+            <Text className={styles.infoValue}>{formatDateLabel(appointment.startAt)}</Text>
+          </View>
+          <View className={styles.infoRow}>
+            <Text className={styles.infoLabel}>Horário</Text>
+            <Text className={styles.infoValue}>{formatTime(appointment.startAt)}</Text>
+          </View>
+          <View className={styles.infoRow}>
+            <Text className={styles.infoLabel}>Serviço</Text>
+            <Text className={styles.infoValue}>{appointment.serviceName}</Text>
+          </View>
+          {isAdmin && (
+            <View className={styles.infoRow}>
+              <Text className={styles.infoLabel}>Cliente</Text>
+              <Text className={styles.infoValue}>{appointment.userName}</Text>
+            </View>
+          )}
+        </View>
+      )}
 
       <View className={styles.infoCard}>
         <View className={styles.infoRow}>
@@ -163,37 +226,105 @@ export default function NegotiationDetailPage() {
           </View>
         </View>
 
-        <View className={styles.infoRow}>
-          <Text className={styles.infoLabel}>Data</Text>
-          <Text className={styles.infoValue}>
-            {formatDateLabel(negotiation.newStartAt)}
-          </Text>
-        </View>
+        {/* Suggested Slots */}
+        {negotiation.suggestedSlots && negotiation.suggestedSlots.length > 0 && (
+          <View>
+            <Text className={styles.sectionTitle}>Horários Disponíveis</Text>
+            <View className={styles.timeSlots}>
+              {negotiation.suggestedSlots.map((slot, index) => {
+                const active = selectedSlot?.startAt === slot.startAt;
+                return (
+                  <Button
+                    key={index}
+                    className={`${styles.timeSlotBtn} ${active ? styles.timeSlotBtnActive : ''}`}
+                    onClick={() => !isAdmin && setSelectedSlot(slot)}
+                    disabled={isAdmin || negotiation.status !== 'pending'}
+                  >
+                    <Text className={`${styles.timeSlotText} ${active ? styles.timeSlotTextActive : ''}`}>
+                      {formatDateLabel(slot.startAt)} {formatTime(slot.startAt)}
+                    </Text>
+                  </Button>
+                );
+              })}
+            </View>
+          </View>
+        )}
 
-        <View className={styles.infoRow}>
-          <Text className={styles.infoLabel}>Horário</Text>
-          <Text className={styles.infoValue}>
-            {formatTime(negotiation.newStartAt)}
-          </Text>
-        </View>
+        {/* Single Slot (Backward Compatibility) */}
+        {(!negotiation.suggestedSlots || negotiation.suggestedSlots.length === 0) && (
+          <View>
+            <Text className={styles.sectionTitle}>Horário Proposto</Text>
+            <View className={styles.infoRow}>
+              <Text className={styles.infoLabel}>Data</Text>
+              <Text className={styles.infoValue}>{formatDateLabel(negotiation.newStartAt)}</Text>
+            </View>
+            <View className={styles.infoRow}>
+              <Text className={styles.infoLabel}>Horário</Text>
+              <Text className={styles.infoValue}>{formatTime(negotiation.newStartAt)}</Text>
+            </View>
+          </View>
+        )}
 
         {negotiation.message && (
           <View className={styles.messageBox}>
-            <Text className={styles.messageText}>
-              {negotiation.message}
-            </Text>
+            <Text className={styles.messageText}>{negotiation.message}</Text>
           </View>
         )}
       </View>
 
-      {negotiation.status === 'pending' && (
+      {/* Admin Actions */}
+      {isAdmin && (
+        <View className={styles.actions}>
+          {negotiation.status === 'pending' && (
+            <Button
+              className={styles.btnPrimary}
+              disabled={busy}
+              onClick={handleAdminAccept}
+            >
+              <Text className={styles.btnPrimaryText}>Confirmar Alteração</Text>
+            </Button>
+          )}
+          {negotiation.status === 'accepted' && (
+            <Button
+              className={styles.btnPrimary}
+              disabled={busy}
+              onClick={handleAdminAccept}
+            >
+              <Text className={styles.btnPrimaryText}>Finalizar Negociação</Text>
+            </Button>
+          )}
+          {negotiation.status === 'counter_offer' && (
+            <View>
+              <Text className={styles.sectionTitle}>Contraproposta do Cliente</Text>
+              <View className={styles.infoRow}>
+                <Text className={styles.infoLabel}>Data</Text>
+                <Text className={styles.infoValue}>{formatDateLabel(negotiation.newStartAt)}</Text>
+              </View>
+              <View className={styles.infoRow}>
+                <Text className={styles.infoLabel}>Horário</Text>
+                <Text className={styles.infoValue}>{formatTime(negotiation.newStartAt)}</Text>
+              </View>
+              <Button
+                className={styles.btnPrimary}
+                disabled={busy}
+                onClick={handleAdminAccept}
+              >
+                <Text className={styles.btnPrimaryText}>Aceitar Contraproposta</Text>
+              </Button>
+            </View>
+          )}
+        </View>
+      )}
+
+      {/* Client Actions */}
+      {!isAdmin && negotiation.status === 'pending' && (
         <View className={styles.actions}>
           <Button
             className={styles.btnPrimary}
-            disabled={busy}
+            disabled={busy || !selectedSlot}
             onClick={handleAccept}
           >
-            <Text className={styles.btnPrimaryText}>Aceitar Proposta</Text>
+            <Text className={styles.btnPrimaryText}>Confirmar Horário</Text>
           </Button>
 
           <Button

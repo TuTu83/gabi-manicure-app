@@ -18,8 +18,8 @@ import {
 } from 'firebase/firestore';
 import { getFirebaseDb, isFirebaseConfigured, removeUndefinedFields } from '@/services/firebase';
 import { consumeRateLimit } from '@/services/storage';
-import type { Appointment, AppointmentStatus, Promotion, ServiceItem } from '@/types/booking';
-import type { UserProfile } from '@/types/user';
+import { Appointment, AppointmentStatus, Promotion, ServiceItem } from '@/types/booking';
+import { UserProfile } from '@/types/user';
 
 type Unsubscribe = () => void;
 

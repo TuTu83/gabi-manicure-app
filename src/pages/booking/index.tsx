@@ -27,8 +27,8 @@ import {
 import { createNotification, maybeSendAppointmentReminder, maybeSendAppointmentStartNotification, requestNotificationPermission } from '@/services/notificationService';
 import { startOfDayMs } from '@/services/financeService';
 import { useAppStore } from '@/store/appStore';
-import type { Appointment, AppointmentStatus, Professional, ServiceItem } from '@/types/booking';
-import type { PaymentMethod } from '@/types/finance';
+import { Appointment, AppointmentStatus, Professional, ServiceItem } from '@/types/booking';
+import { PaymentMethod } from '@/types/finance';
 import styles from './index.module.scss';
 
 function BookingPage() {

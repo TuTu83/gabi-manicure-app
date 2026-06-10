@@ -6,7 +6,7 @@ import classnames from 'classnames';
 import dayjs from 'dayjs';
 import AdminAccordion from '@/components/AdminAccordion';
 import LoadingOverlay from '@/components/LoadingOverlay';
-import MiniBarChart, { type BarChartItem } from '@/components/MiniBarChart';
+import MiniBarChart, { BarChartItem } from '@/components/MiniBarChart';
 import { useAdminGuard } from '@/hooks/useAdminGuard';
 import { subscribeAppointmentsRange, subscribeAllAppointments, subscribeAllPromotions, subscribeAllServices, subscribeAllUsers, setUserAdminFields, setServiceActive as setServiceActiveDoc, upsertPromotion, upsertService, deleteService } from '@/services/adminService';
 import { fetchProfessionals } from '@/services/catalogService';
@@ -29,9 +29,9 @@ import { openAdminWhatsApp } from '@/services/whatsappService';
 import { createNegotiation, getNegotiationsByAppointmentId, acceptNegotiation } from '@/services/negotiationService';
 import { useAppStore } from '@/store/appStore';
 import { formatPhoneBRDisplay } from '@/utils/validators';
-import type { Appointment, AppointmentStatus, InAppNotification, Professional, Promotion, ServiceItem, AppointmentNegotiation } from '@/types/booking';
-import type { PaymentMethod, PaymentRecord } from '@/types/finance';
-import type { UserProfile } from '@/types/user';
+import { Appointment, AppointmentStatus, InAppNotification, Professional, Promotion, ServiceItem, AppointmentNegotiation } from '@/types/booking';
+import { PaymentMethod, PaymentRecord } from '@/types/finance';
+import { UserProfile } from '@/types/user';
 import styles from './index.module.scss';
 
 function toISODate(ms: number): string {
@@ -134,6 +134,7 @@ function AdminPage() {
   const [negotiationDateMs, setNegotiationDateMs] = useState<number>(() => Date.now());
   const [negotiationSlots, setNegotiationSlots] = useState<Array<{ startAt: number; endAt: number; disabled: boolean }>>([]);
   const [negotiationSlotStartAt, setNegotiationSlotStartAt] = useState<number | null>(null);
+  const [negotiationSelectedSlots, setNegotiationSelectedSlots] = useState<number[]>([]); // For multiple selection
   const [negotiationMessage, setNegotiationMessage] = useState('');
   const [appointmentNegotiations, setAppointmentNegotiations] = useState<AppointmentNegotiation[]>([]);
   const [paymentAmount, setPaymentAmount] = useState('0');
@@ -516,11 +517,12 @@ function AdminPage() {
     if (!appointmentSelected) return;
     setNegotiationDateMs(appointmentSelected.startAt);
     setNegotiationSlotStartAt(null);
+    setNegotiationSelectedSlots([]); // Reset selected slots
     setNegotiationMessage('');
     
     // Build slots for negotiation
     const slots = buildSlotsForDay({
-      dayMs: negotiationDateMs,
+      dateMs: negotiationDateMs,
       services: [appointmentSelected],
       professionals,
       appointments: dayAppointments,
@@ -533,17 +535,38 @@ function AdminPage() {
   };
 
   const handleCreateNegotiation = async () => {
-    if (!appointmentSelected || !currentUser || !negotiationSlotStartAt) return;
+    if (!appointmentSelected || !currentUser) return;
+    
+    // Check if we have at least one slot selected (either single or multiple)
+    if (!negotiationSlotStartAt && negotiationSelectedSlots.length === 0) return;
     
     await runSafe(async () => {
-      const newEndAt = negotiationSlotStartAt + (appointmentSelected.totalDurationMinutes || appointmentSelected.durationMinutes) * 60 * 1000;
+      const duration = (appointmentSelected.totalDurationMinutes || appointmentSelected.durationMinutes) * 60 * 1000;
+      
+      // Prepare suggested slots
+      let suggestedSlots: Array<{ startAt: number; endAt: number }> | undefined;
+      let singleSlotStart: number | undefined;
+      let singleSlotEnd: number | undefined;
+      
+      if (negotiationSelectedSlots.length > 0) {
+        // Multiple slots selected
+        suggestedSlots = negotiationSelectedSlots.map(startAt => ({
+          startAt,
+          endAt: startAt + duration,
+        }));
+      } else if (negotiationSlotStartAt) {
+        // Single slot selected (backward compatibility)
+        singleSlotStart = negotiationSlotStartAt;
+        singleSlotEnd = negotiationSlotStartAt + duration;
+      }
       
       await createNegotiation({
         appointmentId: appointmentSelected.id,
         clientId: appointmentSelected.userId,
-        adminId: currentUser.uid,
-        newStartAt: negotiationSlotStartAt,
-        newEndAt,
+        adminId: currentUser.id,
+        newStartAt: singleSlotStart,
+        newEndAt: singleSlotEnd,
+        suggestedSlots,
         message: negotiationMessage.trim() || undefined,
       });
 
@@ -556,7 +579,7 @@ function AdminPage() {
           summary: `Proposta de alteração de horário criada para: ${appointmentSelected.userName}`,
           meta: { 
             newStartAt: negotiationSlotStartAt,
-            newEndAt,
+            newEndAt: singleSlotEnd,
             message: negotiationMessage.trim() 
           },
         });
@@ -1413,7 +1436,22 @@ function AdminPage() {
           >
             {adminNotifications.length ? (
               adminNotifications.slice(0, 5).map((n) => (
-                <View key={n.id} className={styles.listItem}>
+                <View 
+                  key={n.id} 
+                  className={styles.listItem}
+                  onClick={() => {
+                    if (n.negotiationId) {
+                      Taro.navigateTo({ url: `/pages/negotiation-detail/index?negotiationId=${n.negotiationId}` });
+                    } else if (n.appointmentId) {
+                      // Navigate to appointment (if needed)
+                      // For now, just open the modal if we have the appointment
+                      const appointment = dayAppointments.find(a => a.id === n.appointmentId);
+                      if (appointment) {
+                        openAppointment(appointment);
+                      }
+                    }
+                  }}
+                >
                   <Text className={styles.listTitle}>{n.title}</Text>
                   <Text className={styles.listSub}>{n.body}</Text>
                 </View>
@@ -2116,7 +2154,7 @@ function AdminPage() {
         <View className={styles.modalMask} onClick={() => setNegotiationModalOpen(false)}>
           <View className={styles.modalCard} onClick={(e) => e.stopPropagation()}>
             <Text className={styles.modalTitle}>Solicitar alteração de horário</Text>
-            <Text className={styles.modalDesc}>Escolha uma nova data e horário para propor ao cliente.</Text>
+            <Text className={styles.modalDesc}>Escolha uma ou mais datas e horários para propor ao cliente.</Text>
 
             <Text className={styles.fieldLabel}>Data</Text>
             <View className={styles.inputRow}>
@@ -2129,7 +2167,7 @@ function AdminPage() {
                   // Rebuild slots for the new date
                   if (appointmentSelected) {
                     const slots = buildSlotsForDay({
-                      dayMs: next,
+                      dateMs: next,
                       services: [appointmentSelected],
                       professionals,
                       appointments: dayAppointments,
@@ -2138,31 +2176,56 @@ function AdminPage() {
                     });
                     setNegotiationSlots(slots);
                   }
-                  setNegotiationSlotStartAt(null);
                 }}
               >
                 <Text className={styles.listSub}>{formatDateLabel(negotiationDateMs)}</Text>
               </Picker>
             </View>
 
-            <Text className={styles.fieldLabel}>Horário</Text>
+            <Text className={styles.fieldLabel}>Horários (selecione um ou mais)</Text>
             <ScrollView scrollY style={{ maxHeight: '420rpx' }}>
               <View className={styles.badgeRow} style={{ marginTop: 0 }}>
                 {negotiationSlots.map((s) => {
-                  const active = negotiationSlotStartAt === s.startAt;
+                  const isSelected = negotiationSelectedSlots.includes(s.startAt);
                   return (
                     <Button
                       key={`negotiation_slot_${s.startAt}`}
-                      className={classnames(styles.pill, active && styles.badgePrimary)}
+                      className={classnames(styles.pill, isSelected && styles.badgePrimary)}
                       disabled={s.disabled}
-                      onClick={() => setNegotiationSlotStartAt(s.startAt)}
+                      onClick={() => {
+                        if (isSelected) {
+                          setNegotiationSelectedSlots(prev => prev.filter(ts => ts !== s.startAt));
+                        } else {
+                          setNegotiationSelectedSlots(prev => [...prev, s.startAt]);
+                        }
+                        setNegotiationSlotStartAt(null); // Clear single slot selection
+                      }}
                     >
-                      <Text className={classnames(styles.pillText, active && styles.badgePrimaryText)}>{formatTime(s.startAt)}</Text>
+                      <Text className={classnames(styles.pillText, isSelected && styles.badgePrimaryText)}>{formatTime(s.startAt)}</Text>
                     </Button>
                   );
                 })}
               </View>
             </ScrollView>
+
+            {negotiationSelectedSlots.length > 0 && (
+              <View className={styles.infoCard}>
+                <Text className={styles.sectionTitle}>Horários Selecionados</Text>
+                <View style={{ flexDirection: 'column', gap: '8px', marginTop: '8px' }}>
+                  {negotiationSelectedSlots.sort((a, b) => a - b).map(ts => (
+                    <View key={ts} style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+                      <Text className={styles.listSub}>{formatDateLabel(ts)} {formatTime(ts)}</Text>
+                      <Button
+                        className={styles.btnSmall}
+                        onClick={() => setNegotiationSelectedSlots(prev => prev.filter(t => t !== ts))}
+                      >
+                        <Text style={{ fontSize: '12px' }}>Remover</Text>
+                      </Button>
+                    </View>
+                  ))}
+                </View>
+              </View>
+            )}
 
             <Text className={styles.fieldLabel}>Mensagem (opcional)</Text>
             <View className={styles.inputRow}>
@@ -2180,7 +2243,7 @@ function AdminPage() {
               </Button>
               <Button 
                 className={classnames(styles.modalBtn, styles.modalBtnPrimary)} 
-                disabled={busy || !negotiationSlotStartAt} 
+                disabled={busy || negotiationSelectedSlots.length === 0} 
                 onClick={handleCreateNegotiation}
               >
                 <Text className={styles.modalBtnTextWhite}>Enviar proposta</Text>

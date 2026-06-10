@@ -1,5 +1,5 @@
 import Taro from '@tarojs/taro';
-import type { UserProfile } from '@/types/user';
+import { UserProfile } from '@/types/user';
 import { normalizePhoneBRToE164 } from '@/utils/validators';
 import { getFirebaseAuth, getFirebaseDb, isFirebaseConfigured } from '@/services/firebase';
 import { ADMIN_EMAIL } from '@/services/adminService';

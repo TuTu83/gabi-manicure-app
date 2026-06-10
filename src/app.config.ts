@@ -8,7 +8,8 @@ export default defineAppConfig({
     'pages/booking/index',
     'pages/profile/index',
     'pages/admin/index',
-    'pages/debug-push/index'
+    'pages/debug-push/index',
+    'pages/negotiation-detail/index'
   ],
   window: {
     backgroundTextStyle: 'light',

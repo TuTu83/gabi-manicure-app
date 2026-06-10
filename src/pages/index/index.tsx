@@ -9,7 +9,7 @@ import { createNotification, maybeSendAppointmentReminder, maybeSendAppointmentS
 import { openAdminWhatsApp } from '@/services/whatsappService';
 import { useAppStore } from '@/store/appStore';
 import { getFirstName } from '@/utils/validators';
-import type { Appointment, Promotion, ServiceItem } from '@/types/booking';
+import { Appointment, Promotion, ServiceItem } from '@/types/booking';
 import styles from './index.module.scss';
 
 function HomePage() {
@@ -63,6 +63,18 @@ function HomePage() {
     const params = new URLSearchParams(anyWindow.location.search || '');
     const action = params.get('notificationAction');
     const appointmentId = params.get('appointmentId');
+    const negotiationId = params.get('negotiationId');
+
+    // Handle negotiationId first
+    if (negotiationId) {
+      Taro.navigateTo({ url: `/pages/negotiation-detail/index?negotiationId=${negotiationId}` });
+      params.delete('negotiationId');
+      const newSearch = params.toString();
+      const newUrl = `${anyWindow.location.pathname}${newSearch ? `?${newSearch}` : ''}`;
+      anyWindow.history.replaceState({}, '', newUrl);
+      return;
+    }
+
     if (action !== 'on_my_way' || !appointmentId) return;
 
     const targetAppointment = appointments.find((a) => a.id === appointmentId && a.userId === currentUser.id);

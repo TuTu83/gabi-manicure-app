@@ -72,7 +72,16 @@ self.addEventListener('notificationclick', (event) => {
   event.notification.close();
   const data = event.notification.data || {};
   const appointmentId = data?.appointmentId;
+  const negotiationId = data?.negotiationId;
   let url = data?.url || '/';
+  
+  // Handle negotiationId
+  if (negotiationId) {
+    url = `/pages/negotiation-detail/index?negotiationId=${negotiationId}`;
+  } else if (appointmentId) {
+    url = `/pages/booking/index?appointmentId=${appointmentId}`;
+  }
+  
   if (event.action === 'on_my_way') {
     url = `/?notificationAction=on_my_way&appointmentId=${appointmentId || ''}`;
   }

@@ -14,15 +14,15 @@ import {
   where,
   getDoc,
 } from 'firebase/firestore';
-import { getFirebaseDb, isFirebaseConfigured } from '@/services/firebase';
-import { removeUndefinedFields } from '@/services/firebase';
+import { getFirebaseDb, isFirebaseConfigured, removeUndefinedFields } from '@/services/firebase';
 import { getLocalSettings } from '@/services/settingsService';
 import { consumeRateLimit } from '@/services/storage';
 import { ensurePaymentForFinalizedAppointment } from '@/services/financeService';
 import { getAdminFcmTokens } from '@/services/adminService';
-import type { Appointment, AppointmentReview, AppointmentStatus, LoyaltySummary, WaitlistEntry } from '@/types/booking';
-import type { PaymentMethod } from '@/types/finance';
-import type { UserProfile } from '@/types/user';
+import { Appointment, AppointmentReview, AppointmentStatus, LoyaltySummary, WaitlistEntry, Professional, ServiceItem } from '@/types/booking';
+import { PaymentMethod } from '@/types/finance';
+import { UserProfile } from '@/types/user';
+import { AppSettings } from '@/types/settings';
 
 const appointmentsKey = 'gm.appointments';
 const reviewsKey = 'gm.reviews';
@@ -89,6 +89,26 @@ export async function testPing() {
       name: error?.name
     });
     throw error;
+  }
+}
+
+export async function getAppointmentById(appointmentId: string): Promise<Appointment | null> {
+  try {
+    if (!isFirebaseConfigured()) {
+      const all = safeGetArray<Appointment>(appointmentsKey);
+      return all.find(a => a.id === appointmentId) || null;
+    }
+
+    const db = getFirebaseDb();
+    if (!db) return null;
+
+    const docSnap = await getDoc(doc(db, 'appointments', appointmentId));
+    if (!docSnap.exists()) return null;
+
+    return { id: docSnap.id, ...docSnap.data() } as Appointment;
+  } catch (error) {
+    console.error('[getAppointmentById] Error:', error);
+    return null;
   }
 }
 
@@ -291,50 +311,70 @@ export function priceFromCents(cents: number): string {
   return value.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
 }
 
-export function buildSlotsForDay(params: {
-  dateMs: number;
-  durationMinutes: number;
-  busy: Array<{ startAt: number; endAt: number; status: AppointmentStatus }>;
-}): Array<{ startAt: number; endAt: number; disabled: boolean; reason?: string }> {
-  const { dateMs, durationMinutes, busy } = params;
-  const dayStart = dayjs(dateMs).startOf('day');
-  const now = Date.now();
-  const hours = getLocalSettings().businessHours;
-  const workingDays = getLocalSettings().workingDays || [1, 2, 3, 4, 5, 6];
-  const weekday = dayStart.day();
-  if (!workingDays.includes(weekday)) return [];
+export function buildSlotsForDay(params: any): Array<{ startAt: number; endAt: number; disabled: boolean; reason?: string }> {
+  // Handle the simplified version
+  if (params.durationMinutes && params.busy) {
+    const { dateMs, durationMinutes, busy } = params;
+    const dayStart = dayjs(dateMs).startOf('day');
+    const now = Date.now();
+    const hours = getLocalSettings().businessHours;
+    const workingDays = getLocalSettings().workingDays || [1, 2, 3, 4, 5, 6];
+    const weekday = dayStart.day();
+    if (!workingDays.includes(weekday)) return [];
 
-  const openAt = dayStart.hour(hours.openHour).minute(0).second(0).millisecond(0);
-  const closeAt = dayStart.hour(hours.closeHour).minute(0).second(0).millisecond(0);
+    const openAt = dayStart.hour(hours.openHour).minute(0).second(0).millisecond(0);
+    const closeAt = dayStart.hour(hours.closeHour).minute(0).second(0).millisecond(0);
 
-  const stepMinutes = 15;
-  const slots: Array<{ startAt: number; endAt: number; disabled: boolean; reason?: string }> = [];
+    const stepMinutes = 15;
+    const slots: Array<{ startAt: number; endAt: number; disabled: boolean; reason?: string }> = [];
 
-  for (
-    let cursor = openAt.valueOf();
-    cursor + durationMinutes * 60 * 1000 <= closeAt.valueOf();
-    cursor += stepMinutes * 60 * 1000
-  ) {
-    const startAt = cursor;
-    const endAt = cursor + durationMinutes * 60 * 1000;
+    for (
+      let cursor = openAt.valueOf();
+      cursor + durationMinutes * 60 * 1000 <= closeAt.valueOf();
+      cursor += stepMinutes * 60 * 1000
+    ) {
+      const startAt = cursor;
+      const endAt = cursor + durationMinutes * 60 * 1000;
 
-    const isPast = endAt <= now;
-    const hasConflict = busy.some(
-      (b) => b.status !== 'cancelado' && b.status !== 'recusado' && overlaps(startAt, endAt, b.startAt, b.endAt),
-    );
+      const isPast = endAt <= now;
+      const hasConflict = busy.some(
+        (b) => b.status !== 'cancelado' && b.status !== 'recusado' && overlaps(startAt, endAt, b.startAt, b.endAt),
+      );
 
-    if (isPast) {
-      slots.push({ startAt, endAt, disabled: true, reason: 'Horário passado' });
-      continue;
+      if (isPast) {
+        slots.push({ startAt, endAt, disabled: true, reason: 'Horário passado' });
+        continue;
+      }
+      if (hasConflict) {
+        slots.push({ startAt, endAt, disabled: true, reason: 'Ocupado' });
+        continue;
+      }
+      slots.push({ startAt, endAt, disabled: false });
     }
-    if (hasConflict) {
-      slots.push({ startAt, endAt, disabled: true, reason: 'Ocupado' });
-      continue;
-    }
-    slots.push({ startAt, endAt, disabled: false });
+
+    return slots;
   }
 
-  return slots;
+  // Handle the admin version
+  const dateMs = params.dateMs || params.dayMs;
+  const services = params.services || [];
+  const appointments = params.appointments || [];
+  const excludeAppointmentId = params.excludeAppointmentId;
+  
+  if (services.length === 0) return [];
+  
+  const durationMinutes = services.reduce((sum, s) => {
+    if ('durationMinutes' in s) {
+      return sum + (s.durationMinutes || 0);
+    }
+    return sum + (s.totalDurationMinutes || 60);
+  }, 0);
+  
+  const busy = appointments
+    .filter(a => a.id !== excludeAppointmentId)
+    .map(a => ({ startAt: a.startAt, endAt: a.endAt, status: a.status }));
+  
+  return buildSlotsForDay({ dateMs, durationMinutes, busy });
 }
 
 export function subscribeUserAppointments(userId: string, onChange: (items: Appointment[]) => void): Unsubscribe {

@@ -10,7 +10,8 @@ export type AdminLogAction =
   | 'update_settings'
   | 'upsert_service'
   | 'upsert_promotion'
-  | 'update_client';
+  | 'update_client'
+  | 'create_negotiation';
 
 export interface AdminLogRecord {
   id: string;

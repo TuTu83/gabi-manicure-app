@@ -3,10 +3,10 @@ import dayjs from 'dayjs';
 import { addDoc, collection, getDocs, limit, onSnapshot, orderBy, query, startAfter, where } from 'firebase/firestore';
 import { getFirebaseDb, isFirebaseConfigured } from '@/services/firebase';
 import { consumeRateLimit } from '@/services/storage';
-import type { Appointment } from '@/types/booking';
-import type { PaymentMethod, PaymentRecord } from '@/types/finance';
-import type { UserProfile } from '@/types/user';
-import type { DocumentData, QueryDocumentSnapshot } from 'firebase/firestore';
+import { Appointment } from '@/types/booking';
+import { PaymentMethod, PaymentRecord } from '@/types/finance';
+import { UserProfile } from '@/types/user';
+import { DocumentData, QueryDocumentSnapshot } from 'firebase/firestore';
 
 type Unsubscribe = () => void;
 

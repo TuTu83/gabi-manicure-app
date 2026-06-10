@@ -41,6 +41,13 @@ interface PushDiagnostics {
   serviceWorkerError: string | null;
   messagingError: any;
   serviceWorkerAPIAvailable: boolean;
+  notificationPermission?: string;
+  messagingIsSupported?: boolean;
+  serviceWorkerActive?: boolean;
+  serviceWorkerWaiting?: boolean;
+  serviceWorkerInstalling?: boolean;
+  getFcmTokenError?: any;
+  lastSendFlow?: any;
 }
 
 const DashboardPage: React.FC = () => {
@@ -50,6 +57,7 @@ const DashboardPage: React.FC = () => {
     lastReceived: any;
     lastError: any;
     lastApiCall: any;
+    lastSendFlow?: any;
   }>({
     logs: [],
     lastSent: null,
@@ -1579,7 +1587,7 @@ ${data.pushDiagnostics.getFcmTokenError}
           <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: '12px' }}>
             <Badge label="Messaging Criado?" status={pushDiagnostics.messagingObjectCreated} />
             <Badge label="Messaging Disponível?" status={pushDiagnostics.messagingAvailable} />
-            <Badge label="Messaging Suportado?" status={pushDiagnostics.messagingIsSupported} />
+            <Badge label="Messaging Suportado?" status={pushDiagnostics.messagingIsSupported ?? false} />
           </View>
           <View style={{ gap: '12px' }}>
             <Text style={{ fontSize: '14px', fontWeight: 'bold', color: '#111827' }}>
